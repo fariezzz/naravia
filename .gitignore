@@ -47,3 +47,5 @@ Thumbs.db
 # TypeScript & Next.js cache
 *.tsbuildinfo
 next-env.d.ts
+*.md
+!README.md
