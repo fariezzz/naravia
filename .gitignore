@@ -1,0 +1,49 @@
+# Dependensi & Bundle
+node_modules/
+.pnp
+.pnp.js
+.next/
+out/
+build/
+dist/
+
+# Environment & Kunci Rahasia
+.env
+.env*.local
+.env.development
+.env.test
+.env.production
+!.env.local.example
+!.env.example
+
+# Database SQLite & File Penyimpanan Lokal
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.sqlite
+!data/.gitkeep
+
+# File Upload Avatar & Media
+public/uploads/*
+!public/uploads/.gitkeep
+
+# Log & Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor & Sistem Operasi
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# TypeScript & Next.js cache
+*.tsbuildinfo
+next-env.d.ts

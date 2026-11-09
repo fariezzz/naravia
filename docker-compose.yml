@@ -1,0 +1,29 @@
+services:
+  naravia:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: naravia-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    env_file:
+      - path: .env.local
+        required: false
+      - path: .env
+        required: false
+    volumes:
+      # Database SQLite persisten
+      - ./data:/app/data
+      # File upload avatar persisten
+      - ./public/uploads:/app/public/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/characters || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
