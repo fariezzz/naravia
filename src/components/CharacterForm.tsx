@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import CharacterAvatar from './CharacterAvatar';
 import ImageCropModal from './ImageCropModal';
+import FormattedMessage from './FormattedMessage';
 
 export interface CharacterFormValues {
   id?: string;
@@ -916,13 +917,13 @@ export default function CharacterForm({
                       {m.role === 'user' ? 'Kamu' : form.name || 'Karakter'}
                     </span>
                     <div
-                      className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-line ${
-                        m.role === 'user'
-                          ? 'bg-slate-900 text-white'
-                          : 'bg-slate-100 text-slate-800'
+                      className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed whitespace-pre-line ${
+                        m.role === 'character'
+                          ? 'bg-slate-100 text-slate-900 rounded-tl-xs'
+                          : 'bg-slate-900 text-white rounded-tr-xs'
                       }`}
                     >
-                      {m.content}
+                      <FormattedMessage content={m.content} isUser={m.role !== 'character'} />
                     </div>
                   </div>
                 ))

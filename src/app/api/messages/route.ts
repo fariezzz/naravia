@@ -48,8 +48,9 @@ async function generateCharacterTurn(params: {
   character: CharacterRow;
   historyMessages: MessageRow[];
   isAlternativeVariation?: boolean;
+  isContinuation?: boolean;
 }) {
-  const { chat, character, historyMessages, isAlternativeVariation } = params;
+  const { chat, character, historyMessages, isAlternativeVariation, isContinuation } = params;
   const db = getDb();
   const settings = getSettingsMap();
 
@@ -77,6 +78,10 @@ async function generateCharacterTurn(params: {
     sysPrompt += `\n\nCATATAN VARIASI: Berikan sudut pandang respons, ekspresi, atau kelanjutan kalimat yang berbeda dari jawaban sebelumnya, namun tetap 100% konsisten dengan kepribadian ${character.name}.`;
   }
 
+  if (isContinuation) {
+    sysPrompt += `\n\nCATATAN KELANJUTAN: Pengguna diam atau memberikan jeda bagi ${character.name} untuk melanjutkan ucapan, tindakan, atau peristiwa selanjutnya. Lanjutkan narasi atau dialog secara mengalir dan alami dari situasi terakhir tanpa mengulang kalimat sebelumnya.`;
+  }
+
   const llmMessages: LLMMessage[] = [
     { role: 'system', content: sysPrompt },
     ...slicedHistory.map((m) => ({
@@ -84,6 +89,16 @@ async function generateCharacterTurn(params: {
       content: m.content,
     })),
   ];
+
+  // Jika ini adalah instruksi kelanjutan dan pesan terakhir di riwayat adalah dari asisten/karakter,
+  // tambahkan user prompt instruktif di ujung agar kompatibel dengan provider yang mengharuskan
+  // pesan terakhir berasal dari 'user' dan memperjelas ke model untuk melanjutkan adegan.
+  if (isContinuation && llmMessages.length > 1 && llmMessages[llmMessages.length - 1].role === 'assistant') {
+    llmMessages.push({
+      role: 'user',
+      content: `(Lanjutkan secara alami apa yang sedang ${character.name} bicarakan, lakukan, atau reaksi selanjutnya)`,
+    });
+  }
 
   const baseTemp =
     chat.temperature ??
@@ -353,11 +368,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // 5. Kirim pesan baru dari pengguna dan dapatkan balasan karakter
+    // 5. Kirim pesan baru dari pengguna dan/atau lanjutkan respon karakter jika pesan kosong
     const chatId = String(body.chatId || '').trim();
     const content = String(body.content || '').trim();
-    if (!chatId || !content) {
-      return NextResponse.json({ error: 'Pesan dan ID percakapan wajib diisi.' }, { status: 400 });
+    const isContinue = Boolean(body.isContinue || !content);
+
+    if (!chatId) {
+      return NextResponse.json({ error: 'ID percakapan wajib diisi.' }, { status: 400 });
     }
 
     const chat = (db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId) as unknown) as ChatRow | undefined;
@@ -372,29 +389,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Karakter tidak ditemukan.' }, { status: 404 });
     }
 
-    const userMsgTime = new Date().toISOString();
-    const userMsgId = `msg-${Date.now()}-u`;
+    let userMessageRow: MessageRow | null = null;
+    let userMsgId: string | null = null;
 
-    db.prepare(`
-      INSERT INTO messages (
-        id, chat_id, role, content, alternatives, active_alt_index, is_pinned_memory, created_at
-      ) VALUES (?, ?, 'user', ?, ?, 0, 0, ?)
-    `).run(userMsgId, chatId, content, JSON.stringify([content]), userMsgTime);
+    if (content) {
+      const userMsgTime = new Date().toISOString();
+      userMsgId = `msg-${Date.now()}-u`;
 
-    const allMessagesWithUser = (db
+      db.prepare(`
+        INSERT INTO messages (
+          id, chat_id, role, content, alternatives, active_alt_index, is_pinned_memory, created_at
+        ) VALUES (?, ?, 'user', ?, ?, 0, 0, ?)
+      `).run(userMsgId, chatId, content, JSON.stringify([content]), userMsgTime);
+
+      userMessageRow = (db.prepare('SELECT * FROM messages WHERE id = ?').get(userMsgId) as unknown) as MessageRow;
+    }
+
+    const allMessages = (db
       .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC')
       .all(chatId) as unknown) as MessageRow[];
+
+    if (allMessages.length === 0) {
+      return NextResponse.json(
+        { error: 'Belum ada riwayat percakapan. Tuliskan pesan awal untuk memulai percakapan.' },
+        { status: 400 }
+      );
+    }
 
     let turn;
     try {
       turn = await generateCharacterTurn({
         chat,
         character,
-        historyMessages: allMessagesWithUser,
+        historyMessages: allMessages,
+        isContinuation: isContinue,
       });
     } catch (llmErr) {
-      // Jika panggilan LLM gagal, batalkan penyimpanan pesan user tadi supaya tidak menggantung dan kembalikan pesan error jujur
-      db.prepare('DELETE FROM messages WHERE id = ?').run(userMsgId);
+      // Jika panggilan LLM gagal dan tadi sempat menyimpan pesan user, batalkan agar tidak menggantung
+      if (userMsgId) {
+        db.prepare('DELETE FROM messages WHERE id = ?').run(userMsgId);
+      }
       throw llmErr;
     }
 
@@ -409,11 +443,10 @@ export async function POST(req: NextRequest) {
 
     db.prepare('UPDATE chats SET updated_at = ? WHERE id = ?').run(charMsgTime, chatId);
 
-    const userMessage = (db.prepare('SELECT * FROM messages WHERE id = ?').get(userMsgId) as unknown) as MessageRow;
     const charMessage = (db.prepare('SELECT * FROM messages WHERE id = ?').get(charMsgId) as unknown) as MessageRow;
 
     // Jalankan evaluasi ringkasan / ekstraksi memori otomatis Fase 2
-    const updatedMessages = [...allMessagesWithUser, charMessage];
+    const updatedMessages = [...allMessages, charMessage];
     await runPhase2BackgroundTasks(chat, character, updatedMessages);
 
     const updatedChat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
@@ -422,7 +455,7 @@ export async function POST(req: NextRequest) {
       .all(character.id);
 
     return NextResponse.json({
-      userMessage: formatMessageRow(userMessage),
+      userMessage: userMessageRow ? formatMessageRow(userMessageRow) : null,
       characterMessage: formatMessageRow(charMessage),
       matchedLore: turn.matchedLore,
       chat: updatedChat,

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface CharacterAvatarProps {
   name: string;
@@ -18,6 +18,12 @@ const PALETTES = [
 ];
 
 export default function CharacterAvatar({ name, avatar, size = 'md' }: CharacterAvatarProps) {
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    setLoadError(false);
+  }, [avatar]);
+
   const sizeClasses = {
     xs: 'w-7 h-7 text-[11px] rounded-full',
     sm: 'w-8 h-8 text-xs rounded-full',
@@ -26,13 +32,14 @@ export default function CharacterAvatar({ name, avatar, size = 'md' }: Character
     xl: 'w-20 h-20 text-xl rounded-full',
   }[size];
 
-  if (avatar && (avatar.startsWith('/') || avatar.startsWith('http') || avatar.startsWith('data:'))) {
+  if (!loadError && avatar && (avatar.startsWith('/') || avatar.startsWith('http') || avatar.startsWith('data:'))) {
     return (
       <img
         src={avatar}
         alt={name}
         loading="lazy"
         decoding="async"
+        onError={() => setLoadError(true)}
         className={`${sizeClasses} object-cover shrink-0 border border-slate-200 bg-slate-100`}
       />
     );

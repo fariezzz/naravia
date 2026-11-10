@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ConfirmModal from '@/components/ConfirmModal';
+import FormattedMessage from '@/components/FormattedMessage';
 import { getClientCache, setClientCache } from '@/lib/clientCache';
 
 interface MessageItem {
@@ -184,24 +185,31 @@ export default function ChatRoomPage() {
 
   const handleSendMessage = async () => {
     const content = inputText.trim();
-    if (!content || sending) return;
+    if (sending) return;
 
-    const tempUserMsgId = `temp-user-${Date.now()}`;
-    const optimisticUserMessage: MessageItem = {
-      id: tempUserMsgId,
-      chat_id: chatId,
-      role: 'user',
-      content,
-      alternatives: [content],
-      active_alt_index: 0,
-      is_pinned_memory: false,
-      created_at: new Date().toISOString(),
-    };
+    // Jika pesan kosong dan belum ada percakapan sama sekali, jangan kirim
+    if (!content && messages.length === 0) return;
+
+    const isContinue = !content;
+    const tempUserMsgId = !isContinue ? `temp-user-${Date.now()}` : null;
+
+    if (!isContinue && tempUserMsgId) {
+      const optimisticUserMessage: MessageItem = {
+        id: tempUserMsgId,
+        chat_id: chatId,
+        role: 'user',
+        content,
+        alternatives: [content],
+        active_alt_index: 0,
+        is_pinned_memory: false,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, optimisticUserMessage]);
+    }
 
     setSending(true);
     setError('');
     setInputText('');
-    setMessages((prev) => [...prev, optimisticUserMessage]);
 
     try {
       const res = await fetch('/api/messages', {
@@ -211,25 +219,46 @@ export default function ChatRoomPage() {
           action: 'send',
           chatId,
           content,
+          isContinue,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
-        setInputText(content);
+        if (tempUserMsgId) {
+          setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
+          setInputText(content);
+        }
         throw new Error(data.error || 'Gagal mengirim pesan.');
       }
 
-      setMessages((prev) => [
-        ...prev.filter((m) => m.id !== tempUserMsgId),
-        data.userMessage,
-        data.characterMessage,
-      ]);
+      const newItems: MessageItem[] = [];
+      if (data.userMessage) newItems.push(data.userMessage);
+      if (data.characterMessage) newItems.push(data.characterMessage);
+
+      let updatedMessages: MessageItem[] = [];
+      setMessages((prev) => {
+        const filtered = tempUserMsgId ? prev.filter((m) => m.id !== tempUserMsgId) : prev;
+        updatedMessages = [...filtered, ...newItems];
+        return updatedMessages;
+      });
+
       if (Array.isArray(data.matchedLore)) setMatchedLore(data.matchedLore);
       if (data.chat) setChat(data.chat);
       if (Array.isArray(data.memories)) setMemories(data.memories);
+
+      setClientCache(`chat_room_${chatId}`, {
+        chat: data.chat || chat,
+        character,
+        messages: updatedMessages.length > 0 ? updatedMessages : messages,
+        memories: Array.isArray(data.memories) ? data.memories : memories,
+        otherChats,
+        personas,
+        userPersona,
+      });
     } catch (err) {
-      setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
+      if (tempUserMsgId) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
+      }
       setError(err instanceof Error ? err.message : 'Gagal mengirim pesan.');
     } finally {
       setSending(false);
@@ -675,7 +704,7 @@ export default function ChatRoomPage() {
                             Menyusun alternatif jawaban baru...
                           </span>
                         ) : (
-                          msg.content
+                          <FormattedMessage content={msg.content} isUser={!isChar} />
                         )}
                       </div>
                     )}
@@ -803,17 +832,24 @@ export default function ChatRoomPage() {
                     handleSendMessage();
                   }
                 }}
-                placeholder={`Kirim pesan ke ${character.name}... (Enter untuk kirim, Shift+Enter baris baru)`}
+                placeholder={
+                  messages.length > 0
+                    ? `Kirim pesan ke ${character.name}... (Enter kosong untuk lanjut bicara, Shift+Enter baris baru)`
+                    : `Kirim pesan ke ${character.name}... (Enter untuk kirim, Shift+Enter baris baru)`
+                }
                 className="flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none"
               />
               <button
                 type="button"
-                disabled={sending || !inputText.trim()}
+                disabled={sending || (!inputText.trim() && messages.length === 0)}
                 onClick={handleSendMessage}
                 className="h-[60px] px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0 transition-colors"
+                title={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
               >
                 <Send className="w-4 h-4" />
-                <span className="hidden sm:inline">Kirim</span>
+                <span className="hidden sm:inline">
+                  {inputText.trim() ? 'Kirim' : messages.length > 0 ? 'Lanjut' : 'Kirim'}
+                </span>
               </button>
             </div>
           </div>

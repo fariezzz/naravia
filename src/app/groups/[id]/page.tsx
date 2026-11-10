@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Send, MessageSquare, AlertCircle, X } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
+import FormattedMessage from '@/components/FormattedMessage';
 import { getClientCache, setClientCache } from '@/lib/clientCache';
 
 export default function GroupChatRoomPage() {
@@ -143,7 +144,8 @@ export default function GroupChatRoomPage() {
     if (sending) return;
     const textToSend = options?.content !== undefined ? options.content : inputText.trim();
 
-    if (!textToSend && !options?.targetCharacterId) return;
+    // Jika pesan kosong dan belum ada percakapan sama sekali serta tidak ada target karakter khusus
+    if (!textToSend && !options?.targetCharacterId && messages.length === 0) return;
 
     const tempUserMsgId = textToSend ? `temp-guser-${Date.now()}` : null;
 
@@ -338,7 +340,7 @@ export default function GroupChatRoomPage() {
                           : 'bg-slate-900 text-white rounded-tr-xs'
                       }`}
                     >
-                      {msg.content}
+                      <FormattedMessage content={msg.content} isUser={!isChar} />
                     </div>
                   </div>
                   {!isChar && (
@@ -373,17 +375,24 @@ export default function GroupChatRoomPage() {
                 handleTurn();
               }
             }}
-            placeholder="Kirim pesan ke grup (sebut nama karakter jika ingin menunjuk gilirannya)..."
+            placeholder={
+              messages.length > 0
+                ? 'Kirim pesan ke grup (Enter kosong untuk lanjut bicara karakter lain)...'
+                : 'Kirim pesan ke grup (sebut nama karakter jika ingin menunjuk gilirannya)...'
+            }
             className="flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 resize-none"
           />
           <button
             type="button"
-            disabled={sending || !inputText.trim()}
+            disabled={sending || (!inputText.trim() && messages.length === 0)}
             onClick={() => handleTurn()}
             className="h-[60px] px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
+            title={!inputText.trim() ? 'Lanjut bicara karakter berikutnya' : 'Kirim'}
           >
             <Send className="w-4 h-4" />
-            <span className="hidden sm:inline">Kirim</span>
+            <span className="hidden sm:inline">
+              {inputText.trim() ? 'Kirim' : messages.length > 0 ? 'Lanjut' : 'Kirim'}
+            </span>
           </button>
         </div>
       </div>

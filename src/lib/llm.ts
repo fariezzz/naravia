@@ -552,5 +552,8 @@ export function cleanCharacterOutput(raw: string, characterName?: string): strin
     const prefixRegex = new RegExp(`^\\*{0,2}${escaped}\\*{0,2}\\s*:\\s*`, 'i');
     text = text.replace(prefixRegex, '').trim();
   }
+  // Ganti em-dash (—) dan en-dash (–) menjadi tanda baca alami (koma / tanda hubung)
+  text = text.replace(/\s*—\s*/g, ' - ').replace(/—/g, ' - ');
+  text = text.replace(/\s*–\s*/g, ' - ');
   return text;
 }
