@@ -312,12 +312,12 @@ export default function ImageCropModal({
         </div>
 
         {/* Tombol Batal & Simpan */}
-        <div className="flex items-center justify-end gap-2.5 pt-1 border-t border-slate-100">
+        <div className="flex flex-col-reverse sm:flex-row items-center sm:justify-end gap-2 sm:gap-2.5 pt-1 border-t border-slate-100">
           <button
             type="button"
             disabled={saving}
             onClick={onCancel}
-            className="h-9 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 inline-flex items-center gap-1.5"
+            className="w-full sm:w-auto h-9 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 inline-flex items-center justify-center gap-1.5"
           >
             <X className="w-3.5 h-3.5" />
             <span>Batal</span>
@@ -326,7 +326,7 @@ export default function ImageCropModal({
             type="button"
             disabled={saving || !imgLoaded}
             onClick={handleSave}
-            className="h-9 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
+            className="w-full sm:w-auto h-9 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
           >
             <Check className="w-3.5 h-3.5" />
             <span>{saving ? 'Menyimpan...' : 'Simpan Foto'}</span>

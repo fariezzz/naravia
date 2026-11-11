@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { ArrowLeft, Send, MessageSquare, AlertCircle, X } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import FormattedMessage from '@/components/FormattedMessage';
-import { getClientCache, setClientCache } from '@/lib/clientCache';
+import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
 
 export default function GroupChatRoomPage() {
   const params = useParams<{ id: string }>();
@@ -47,6 +47,7 @@ export default function GroupChatRoomPage() {
   const [inputText, setInputText] = useState('');
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const loadGroupRoom = async (isBackground = false) => {
     if (!isBackground) {
@@ -112,6 +113,12 @@ export default function GroupChatRoomPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, sending]);
 
+  useEffect(() => {
+    if (!inputText && textareaRef.current) {
+      textareaRef.current.style.height = '';
+    }
+  }, [inputText]);
+
   const handleSwitchGroupPersona = async (personaId: string) => {
     const chosen = personas.find((p) => p.id === personaId);
     if (chosen) {
@@ -153,6 +160,9 @@ export default function GroupChatRoomPage() {
     setError('');
     if (options?.content === undefined) {
       setInputText('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = '';
+      }
     }
 
     if (tempUserMsgId && textToSend) {
@@ -225,9 +235,9 @@ export default function GroupChatRoomPage() {
   }
 
   return (
-    <div className="h-[calc(100dvh-54px)] md:h-[calc(100dvh-64px)] overflow-hidden flex flex-col max-w-5xl w-full mx-auto px-4 py-3">
-      {/* Header Grup */}
-      <div className="bg-white rounded-2xl border border-slate-200 px-4 py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs shrink-0">
+    <div className="flex-1 flex flex-col h-full overflow-hidden max-w-5xl w-full mx-auto px-0 sm:px-4 py-0 sm:py-3 min-h-0">
+      {/* Header Grup (Sticky & Fixed di Atas) */}
+      <div className="bg-white border-b sm:border border-slate-200 px-3.5 sm:px-4 py-2 sm:py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-3 sm:rounded-2xl shadow-2xs shrink-0 z-20">
         <div className="flex items-center gap-3 min-w-0">
           <Link
             href="/groups"
@@ -301,8 +311,8 @@ export default function GroupChatRoomPage() {
       )}
 
       {/* Area Pesan Grup */}
-      <div className="flex-1 bg-white rounded-2xl border border-slate-200 mt-3 flex flex-col overflow-hidden shadow-2xs">
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+      <div className="flex-1 bg-white border-0 sm:border border-slate-200 mt-0 sm:mt-3 flex flex-col overflow-hidden sm:rounded-2xl shadow-none sm:shadow-2xs">
+        <div className="flex-1 overflow-y-auto px-3.5 py-4 sm:p-6 space-y-4 sm:space-y-5">
           {messages.length === 0 ? (
             <div className="p-6 text-center text-xs text-slate-500 space-y-2">
               <p>Ruang grup siap dimulai.</p>
@@ -316,7 +326,7 @@ export default function GroupChatRoomPage() {
               return (
                 <div
                   key={msg.id}
-                  className={`flex items-start gap-3 ${isChar ? 'justify-start' : 'justify-end'}`}
+                  className={`flex items-start gap-2.5 sm:gap-3 ${isChar ? 'justify-start' : 'justify-end'}`}
                 >
                   {isChar && (
                     <CharacterAvatar
@@ -326,7 +336,7 @@ export default function GroupChatRoomPage() {
                     />
                   )}
                   <div
-                    className={`max-w-[85%] sm:max-w-[75%] space-y-1 ${
+                    className={`max-w-[92%] sm:max-w-[78%] min-w-0 space-y-1.5 ${
                       isChar ? 'items-start' : 'items-end flex flex-col'
                     }`}
                   >
@@ -334,7 +344,7 @@ export default function GroupChatRoomPage() {
                       {isChar ? msg.character_name : userPersona.display_name || 'Kamu'}
                     </span>
                     <div
-                      className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${
+                      className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line break-words [overflow-wrap:anywhere] ${
                         isChar
                           ? 'bg-slate-100 text-slate-900 rounded-tl-xs'
                           : 'bg-slate-900 text-white rounded-tr-xs'
@@ -364,35 +374,44 @@ export default function GroupChatRoomPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div className="p-3.5 border-t border-slate-200 bg-slate-50/50 flex items-end gap-2">
+        {/* Input Kirim Pesan Grup (Sticky & Fixed di Bawah) */}
+        <div className="p-2.5 sm:p-3.5 border-t border-slate-200 bg-slate-50/70 backdrop-blur-xs flex items-center gap-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shrink-0 z-20">
           <textarea
-            rows={2}
+            ref={textareaRef}
+            rows={1}
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleTurn();
+            onChange={(e) => {
+              setInputText(e.target.value);
+              e.target.style.height = 'auto';
+              if (e.target.value.trim()) {
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
+              } else {
+                e.target.style.height = '';
               }
             }}
-            placeholder={
-              messages.length > 0
-                ? 'Kirim pesan ke grup (Enter kosong untuk lanjut bicara karakter lain)...'
-                : 'Kirim pesan ke grup (sebut nama karakter jika ingin menunjuk gilirannya)...'
-            }
-            className="flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 resize-none"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                const isMobileDevice =
+                  typeof window !== 'undefined' &&
+                  (window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 768);
+                if (!isMobileDevice) {
+                  e.preventDefault();
+                  handleTurn();
+                }
+              }
+            }}
+            placeholder="Kirim pesan ke grup..."
+            className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs"
           />
           <button
             type="button"
             disabled={sending || (!inputText.trim() && messages.length === 0)}
             onClick={() => handleTurn()}
-            className="h-[60px] px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
+            className="h-[48px] w-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
             title={!inputText.trim() ? 'Lanjut bicara karakter berikutnya' : 'Kirim'}
+            aria-label={!inputText.trim() ? 'Lanjut bicara karakter berikutnya' : 'Kirim'}
           >
             <Send className="w-4 h-4" />
-            <span className="hidden sm:inline">
-              {inputText.trim() ? 'Kirim' : messages.length > 0 ? 'Lanjut' : 'Kirim'}
-            </span>
           </button>
         </div>
       </div>

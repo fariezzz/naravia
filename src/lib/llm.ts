@@ -209,12 +209,24 @@ async function callOpenAICompatible(
       }
     }
 
+    const isGlm = params.model.toLowerCase().includes('glm');
+    const effectiveTemp = isGlm
+      ? Math.min(params.temperature, 0.7)
+      : params.temperature;
+
     const body: Record<string, unknown> = {
       model: params.model,
       messages: finalMessages,
-      temperature: params.temperature,
+      temperature: effectiveTemp,
       max_tokens: params.maxTokens,
+      top_p: isGlm ? 0.8 : 0.9,
     };
+
+    // Parameter penstabil sampling untuk model GLM agar tidak loop/glitch token
+    if (isGlm) {
+      body.presence_penalty = 0.1;
+      body.frequency_penalty = 0.1;
+    }
 
     if (includeResponseFormat && params.jsonMode) {
       body.response_format = { type: 'json_object' };
@@ -545,15 +557,73 @@ async function callOllama(
 export function cleanCharacterOutput(raw: string, characterName?: string): string {
   if (!raw) return '';
   let text = raw.trim();
-  // Bersihkan blok berpikir internal jika model menyertakannya
+
+  // 1. Bersihkan blok berpikir internal jika model menyertakannya (<think>...</think>)
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // 2. Bersihkan kebocoran sintaks internal tool call model
+  text = text.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '').trim();
+  text = text.replace(/<tool_call>|<\/tool_call>/gi, '').trim();
+  text = text.replace(/<function_call>[\s\S]*?<\/function_call>/gi, '').trim();
+  text = text.replace(/<function_call>|<\/function_call>/gi, '').trim();
+  text = text.replace(/<call:[\s\S]*?>[\s\S]*?<\/call:[\s\S]*?>/gi, '').trim();
+
+  // 3. Bersihkan prefix nama karakter di awal teks (misal: "Eli Ayase: ...")
   if (characterName) {
     const escaped = characterName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const prefixRegex = new RegExp(`^\\*{0,2}${escaped}\\*{0,2}\\s*:\\s*`, 'i');
     text = text.replace(prefixRegex, '').trim();
   }
-  // Ganti em-dash (—) dan en-dash (–) menjadi tanda baca alami (koma / tanda hubung)
+
+  // 4. Ganti em-dash (—) dan en-dash (–) menjadi tanda baca alami (koma / tanda hubung)
   text = text.replace(/\s*—\s*/g, ' - ').replace(/—/g, ' - ');
   text = text.replace(/\s*–\s*/g, ' - ');
-  return text;
+
+  // 5. Deteksi dan potong glitch token / decoding breakdown acak (sering terjadi pada model GLM / multilingual)
+  // Contoh pola breakdown: "====experimental", "===...", atau rentetan token non-latin acak campur kode
+  if (text.includes('====') || text.includes('----')) {
+    const splitIndex = text.search(/={4,}|-{4,}/);
+    if (splitIndex > 0) {
+      // Ambil bagian yang valid sebelum garis pembatas breakdown
+      const candidate = text.slice(0, splitIndex).trim();
+      if (candidate.length > 20) {
+        text = candidate;
+      }
+    }
+  }
+
+  // Jika teks terindikasi degradasi token ekstrem (percampuran 3+ jenis aksara asing non-latin/Cyrillic/Arab/Thai/Hangul secara acak)
+  const cyrillicMatch = (text.match(/[\u0400-\u04FF]/g) || []).length;
+  const arabicMatch = (text.match(/[\u0600-\u06FF]/g) || []).length;
+  const thaiMatch = (text.match(/[\u0E00-\u0E7F]/g) || []).length;
+  const hangulMatch = (text.match(/[\uAC00-\uD7AF]/g) || []).length;
+  const cjkMatch = (text.match(/[\u4E00-\u9FFF]/g) || []).length;
+
+  const nonLatinScriptsPresent = [
+    cyrillicMatch > 3,
+    arabicMatch > 3,
+    thaiMatch > 3,
+    hangulMatch > 3,
+    cjkMatch > 5,
+  ].filter(Boolean).length;
+
+  // Jika teks mengandung percampuran script tak wajar (misal Sirilik + Arab + Hanzi + Thai sekaligus dalam 1 respons chat)
+  if (nonLatinScriptsPresent >= 2) {
+    // Cari apakah ada paragraf bahasa Indonesia/Latin yang masih utuh di dalamnya
+    const paragraphs = text.split('\n').map((p) => p.trim()).filter(Boolean);
+    const validLatinParagraphs = paragraphs.filter((p) => {
+      const latinCount = (p.match(/[a-zA-Z]/g) || []).length;
+      const totalChars = p.length;
+      return totalChars > 20 && latinCount / totalChars > 0.6;
+    });
+
+    if (validLatinParagraphs.length > 0) {
+      text = validLatinParagraphs.join('\n\n');
+    } else {
+      // Jika seluruhnya token sampah campur aduk, bersihkan agar sistem melakukan retry bersih
+      text = '';
+    }
+  }
+
+  return text.trim();
 }

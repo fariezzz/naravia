@@ -53,9 +53,16 @@ export default function Navbar() {
     { href: '/settings', label: 'Pengaturan', icon: Settings, match: (p: string) => p.startsWith('/settings') },
   ];
 
+  if (pathname.startsWith('/chat/') || pathname.startsWith('/groups/')) {
+    // Pada halaman percakapan, navbar atas disembunyikan di mobile agar ruang chat 100% full height & header chat menjadi navbar utama
+    // Di desktop (md:flex), navbar tetap tampil
+  }
+
   return (
-    <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur border-b border-slate-200 h-[54px] md:h-[64px]">
-      <div className="max-w-6xl mx-auto h-full px-4 flex items-center justify-between gap-4">
+    <header className={`sticky top-0 z-20 w-full bg-white/95 backdrop-blur border-b border-slate-200 h-[54px] md:h-[64px] shrink-0 ${
+      pathname.startsWith('/chat/') || pathname.startsWith('/groups/') ? 'hidden md:block' : 'block'
+    }`}>
+      <div className="max-w-6xl mx-auto h-full px-3.5 sm:px-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-6">
           <Link
             href="/"

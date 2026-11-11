@@ -25,11 +25,11 @@ export default function CharacterAvatar({ name, avatar, size = 'md' }: Character
   }, [avatar]);
 
   const sizeClasses = {
-    xs: 'w-7 h-7 text-[11px] rounded-full',
-    sm: 'w-8 h-8 text-xs rounded-full',
-    md: 'w-11 h-11 text-sm rounded-full',
-    lg: 'w-14 h-14 text-base rounded-full',
-    xl: 'w-20 h-20 text-xl rounded-full',
+    xs: 'w-7 h-7 min-w-7 min-h-7 aspect-square text-[11px] rounded-full',
+    sm: 'w-8 h-8 min-w-8 min-h-8 aspect-square text-xs rounded-full',
+    md: 'w-11 h-11 min-w-11 min-h-11 aspect-square text-sm rounded-full',
+    lg: 'w-14 h-14 min-w-14 min-h-14 aspect-square text-base rounded-full',
+    xl: 'w-20 h-20 min-w-20 min-h-20 aspect-square text-xl rounded-full',
   }[size];
 
   if (!loadError && avatar && (avatar.startsWith('/') || avatar.startsWith('http') || avatar.startsWith('data:'))) {
@@ -40,7 +40,7 @@ export default function CharacterAvatar({ name, avatar, size = 'md' }: Character
         loading="lazy"
         decoding="async"
         onError={() => setLoadError(true)}
-        className={`${sizeClasses} object-cover shrink-0 border border-slate-200 bg-slate-100`}
+        className={`${sizeClasses} object-cover shrink-0 border border-slate-200 bg-slate-100 block`}
       />
     );
   }

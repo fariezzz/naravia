@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Users, Plus, Trash2, ChevronRight, AlertCircle } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ConfirmModal from '@/components/ConfirmModal';
-import { getClientCache, setClientCache } from '@/lib/clientCache';
+import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
 
 export default function GroupsPage() {
   const router = useRouter();
@@ -102,7 +102,10 @@ export default function GroupsPage() {
     if (!deleteTargetId) return;
     try {
       await fetch(`/api/group-chats/${deleteTargetId}`, { method: 'DELETE' });
-      setGroupChats((prev) => prev.filter((g) => g.id !== deleteTargetId));
+      const nextGroups = groupChats.filter((g) => g.id !== deleteTargetId);
+      setGroupChats(nextGroups);
+      setClientCache('group_chats_list', nextGroups);
+      invalidateClientCache(`group_room_${deleteTargetId}`);
       setDeleteTargetId(null);
     } catch {
       setError('Gagal menghapus grup chat.');
@@ -127,7 +130,7 @@ export default function GroupsPage() {
             setScenarioInput('');
             setShowCreateModal(true);
           }}
-          className="h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
+          className="w-full sm:w-auto h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
         >
           <Plus className="w-4 h-4" />
           <span>Buat Grup Chat</span>
@@ -283,18 +286,18 @@ export default function GroupsPage() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setShowCreateModal(false)}
-                className="h-9 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-700"
+                className="w-full sm:w-auto h-9 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-700"
               >
                 Batal
               </button>
               <button
                 type="submit"
                 disabled={creating || selectedCharIds.length < 2}
-                className="h-9 px-5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-xs font-semibold"
+                className="w-full sm:w-auto h-9 px-5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-xs font-semibold"
               >
                 {creating ? 'Membuat...' : 'Mulai Grup Chat'}
               </button>

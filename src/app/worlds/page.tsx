@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import CharacterAvatar from '@/components/CharacterAvatar';
-import { getClientCache, setClientCache } from '@/lib/clientCache';
+import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
 
 export default function WorldsPage() {
   const [worlds, setWorlds] = useState<any[]>(() => {
@@ -172,6 +172,10 @@ export default function WorldsPage() {
     if (!deleteWorldTarget) return;
     try {
       await fetch(`/api/worlds/${deleteWorldTarget}`, { method: 'DELETE' });
+      const nextWorlds = worlds.filter((w) => w.id !== deleteWorldTarget);
+      setWorlds(nextWorlds);
+      setClientCache('worlds_list', nextWorlds);
+      invalidateClientCache('worlds_list');
       setDeleteWorldTarget(null);
       await loadWorlds();
     } catch {
@@ -242,7 +246,7 @@ export default function WorldsPage() {
         <button
           type="button"
           onClick={startNewWorldForm}
-          className="h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
+          className="w-full sm:w-auto h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
         >
           <Plus className="w-4 h-4" />
           <span>Buat Dunia Baru</span>

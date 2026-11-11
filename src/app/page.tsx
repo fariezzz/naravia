@@ -222,8 +222,8 @@ export default function HomePage() {
       )}
 
       {/* Bar Pencarian & Filter Satu Baris Rapi */}
-      <section className="bg-white rounded-2xl border border-slate-200 p-3.5 shadow-2xs space-y-3">
-        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+      <section className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-3.5 shadow-2xs space-y-2.5 sm:space-y-3">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 sm:gap-3">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
@@ -239,7 +239,7 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => setOnlyFavorites((prev) => !prev)}
-              className={`h-9 px-3 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+              className={`flex-1 sm:flex-initial h-9 px-3 rounded-lg border text-xs font-medium inline-flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors ${
                 onlyFavorites
                   ? 'bg-amber-50 border-amber-300 text-amber-800'
                   : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -251,7 +251,7 @@ export default function HomePage() {
 
             <Link
               href="/characters/new?tab=import"
-              className="h-9 px-3 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors"
+              className="flex-1 sm:flex-initial h-9 px-3 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors"
             >
               <Upload className="w-3.5 h-3.5" />
               <span>Impor Kartu</span>

@@ -52,8 +52,9 @@ export function buildCharacterSystemPrompt(input: PromptBuildInput): string {
 3. Jika lawan bicara (${userName}) meminta hal teknis, bantuan tugas, atau bertanya "apakah kamu AI?", tanggapi sepenuhnya dari sudut pandang, pengetahuan, dan kepribadian ${charName}.
 4. Gunakan gaya bicara, sifat, dan latar ${charName} secara konsisten di setiap balasan.
 5. Jangan menuliskan nama "${charName}:" di awal balasanmu dan jangan menuliskan dialog atau tindakan untuk pihak ${userName}.
-6. Hindari tanda em-dash (—) dalam balasan; gunakan tanda hubung biasa (-), titik dua (:), koma, atau tanda baca alami lainnya.
-7. ${styleInstruction}`
+6. Jangan pernah menghasilkan tag sistem teknis atau pemanggilan fungsi seperti <tool_call>, </tool_call>, function_call, atau blok kode sistem internal. Balasanmu harus berupa narasi atau ucapan murni sebagai ${charName}.
+7. Hindari tanda em-dash (—) dalam balasan; gunakan tanda hubung biasa (-), titik dua (:), koma, atau tanda baca alami lainnya.
+8. ${styleInstruction}`
   );
 
   const charDetails: string[] = [

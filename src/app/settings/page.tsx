@@ -19,7 +19,7 @@ import {
 import ConfirmModal from '@/components/ConfirmModal';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ImageCropModal from '@/components/ImageCropModal';
-import { getClientCache, setClientCache } from '@/lib/clientCache';
+import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
 
 const PROVIDER_PRESETS = [
   {
@@ -352,6 +352,9 @@ export default function SettingsPage() {
       setDeletePersonaTarget(null);
       const list = Array.isArray(data.personas) ? data.personas : [];
       setPersonas(list);
+      setClientCache('settings_personas', list);
+      invalidateClientCache('settings_personas');
+      invalidateClientCache('navbar_persona');
       if (list[0]) {
         selectPersonaItem(list[0]);
       }
@@ -499,7 +502,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Navigasi Sub-Tab Satu Baris */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-1.5 inline-flex flex-wrap items-center gap-1">
+      <div className="bg-white rounded-2xl border border-slate-200 p-1.5 flex overflow-x-auto items-center gap-1 max-w-full">
         {tabs.map((t) => {
           const Icon = t.icon;
           const active = activeTab === t.id;
@@ -512,7 +515,7 @@ export default function SettingsPage() {
                 setError('');
                 setNotice('');
               }}
-              className={`h-9 px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+              className={`h-9 px-3.5 sm:px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition-colors shrink-0 ${
                 active
                   ? 'bg-slate-900 text-white'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'

@@ -909,7 +909,7 @@ export default function CharacterForm({
                 previewMessages.map((m, i) => (
                   <div
                     key={i}
-                    className={`flex flex-col ${
+                    className={`flex flex-col min-w-0 ${
                       m.role === 'user' ? 'items-end' : 'items-start'
                     }`}
                   >
@@ -917,7 +917,7 @@ export default function CharacterForm({
                       {m.role === 'user' ? 'Kamu' : form.name || 'Karakter'}
                     </span>
                     <div
-                      className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed whitespace-pre-line ${
+                      className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed whitespace-pre-line break-words [overflow-wrap:anywhere] ${
                         m.role === 'character'
                           ? 'bg-slate-100 text-slate-900 rounded-tl-xs'
                           : 'bg-slate-900 text-white rounded-tr-xs'

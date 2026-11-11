@@ -22,7 +22,7 @@ import {
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ConfirmModal from '@/components/ConfirmModal';
 import FormattedMessage from '@/components/FormattedMessage';
-import { getClientCache, setClientCache } from '@/lib/clientCache';
+import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
 
 interface MessageItem {
   id: string;
@@ -109,6 +109,7 @@ export default function ChatRoomPage() {
   const [deleteMsgTarget, setDeleteMsgTarget] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const loadRoom = async (isBackground = false) => {
     if (!isBackground) {
@@ -183,6 +184,12 @@ export default function ChatRoomPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, sending]);
 
+  useEffect(() => {
+    if (!inputText && textareaRef.current) {
+      textareaRef.current.style.height = '';
+    }
+  }, [inputText]);
+
   const handleSendMessage = async () => {
     const content = inputText.trim();
     if (sending) return;
@@ -210,6 +217,9 @@ export default function ChatRoomPage() {
     setSending(true);
     setError('');
     setInputText('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = '';
+    }
 
     try {
       const res = await fetch('/api/messages', {
@@ -343,8 +353,20 @@ export default function ChatRoomPage() {
           messageId: deleteMsgTarget,
         }),
       });
-      setMessages((prev) => prev.filter((m) => m.id !== deleteMsgTarget));
+      const remainingMessages = messages.filter((m) => m.id !== deleteMsgTarget);
+      setMessages(remainingMessages);
       setDeleteMsgTarget(null);
+
+      // Perbarui in-memory client cache secara langsung agar pesan yang dihapus tidak pernah muncul lagi saat navigasi
+      setClientCache(`chat_room_${chatId}`, {
+        chat,
+        character,
+        messages: remainingMessages,
+        memories,
+        otherChats,
+        personas,
+        userPersona,
+      });
     } catch {
       setError('Gagal menghapus pesan.');
     }
@@ -485,6 +507,9 @@ export default function ChatRoomPage() {
   const handleDeleteCurrentChat = async () => {
     try {
       await fetch(`/api/chats/${chatId}`, { method: 'DELETE' });
+      invalidateClientCache(`chat_room_${chatId}`);
+      invalidateClientCache('home_recent_chats');
+      invalidateClientCache(`char_profile_${character?.id}`);
       router.push(character ? `/characters/${character.id}` : '/');
     } catch {
       setError('Gagal menghapus ruang percakapan.');
@@ -513,9 +538,9 @@ export default function ChatRoomPage() {
   }
 
   return (
-    <div className="h-[calc(100dvh-54px)] md:h-[calc(100dvh-64px)] overflow-hidden flex flex-col max-w-5xl w-full mx-auto px-4 py-3">
-      {/* Bar Header Ruang Chat */}
-      <div className="bg-white rounded-2xl border border-slate-200 px-4 py-2.5 flex items-center justify-between gap-3 shadow-2xs shrink-0">
+    <div className="flex-1 flex flex-col h-full overflow-hidden max-w-5xl w-full mx-auto px-0 sm:px-4 py-0 sm:py-3 min-h-0">
+      {/* Bar Header Ruang Chat (Sticky & Fixed di Atas) */}
+      <div className="bg-white border-b sm:border border-slate-200 px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2 sm:gap-3 sm:rounded-2xl shadow-2xs shrink-0 z-20">
         <div className="flex items-center gap-3 min-w-0">
           <Link
             href={`/characters/${character.id}`}
@@ -556,7 +581,7 @@ export default function ChatRoomPage() {
                 value={userPersona.id || ''}
                 onChange={(e) => handleSwitchChatPersona(e.target.value)}
                 aria-label="Pilih Persona"
-                className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer max-w-[115px] truncate"
+                className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer max-w-[85px] sm:max-w-[115px] truncate"
               >
                 {personas.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -569,7 +594,7 @@ export default function ChatRoomPage() {
           <button
             type="button"
             onClick={handleCreateNewRoomSameCharacter}
-            className="h-8 px-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1 whitespace-nowrap"
+            className="h-8 w-8 sm:w-auto sm:px-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center justify-center gap-1 whitespace-nowrap"
             title="Mulai Alur Chat Baru dengan Karakter Ini"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -578,14 +603,15 @@ export default function ChatRoomPage() {
           <button
             type="button"
             onClick={() => setShowDrawer((p) => !p)}
-            className={`h-8 px-2.5 rounded-lg border text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap transition-colors ${
+            className={`h-8 px-2 sm:px-2.5 rounded-lg border text-xs font-medium inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors ${
               showDrawer
                 ? 'bg-slate-900 border-slate-900 text-white'
                 : 'border-slate-200 hover:bg-slate-50 text-slate-700'
             }`}
+            title="Pengaturan Chat"
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>Pengaturan Chat</span>
+            <span className="hidden sm:inline">Pengaturan Chat</span>
           </button>
         </div>
       </div>
@@ -627,10 +653,10 @@ export default function ChatRoomPage() {
       )}
 
       {/* Area Utama: Alur Bubble Chat + Drawer Pengaturan Samping */}
-      <div className="flex-1 flex gap-4 mt-3 min-h-0">
+      <div className="flex-1 flex gap-4 mt-0 sm:mt-3 min-h-0">
         {/* Daftar Pesan */}
-        <div className="flex-1 bg-white rounded-2xl border border-slate-200 flex flex-col overflow-hidden shadow-2xs">
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+        <div className="flex-1 bg-white border-0 sm:border border-slate-200 flex flex-col overflow-hidden sm:rounded-2xl shadow-none sm:shadow-2xs">
+          <div className="flex-1 overflow-y-auto px-3.5 py-4 sm:p-6 space-y-4 sm:space-y-5">
             {messages.map((msg) => {
               const isChar = msg.role === 'character';
               const altCount = msg.alternatives?.length || 1;
@@ -641,14 +667,14 @@ export default function ChatRoomPage() {
               return (
                 <div
                   key={msg.id}
-                  className={`flex items-start gap-3 ${isChar ? 'justify-start' : 'justify-end'}`}
+                  className={`flex items-start gap-2.5 sm:gap-3 ${isChar ? 'justify-start' : 'justify-end'}`}
                 >
                   {isChar && (
                     <CharacterAvatar name={character.name} avatar={character.avatar} size="sm" />
                   )}
 
                   <div
-                    className={`max-w-[85%] sm:max-w-[75%] space-y-1.5 ${
+                    className={`max-w-[92%] sm:max-w-[78%] min-w-0 space-y-1.5 ${
                       isChar ? 'items-start' : 'items-end flex flex-col'
                     }`}
                   >
@@ -693,7 +719,7 @@ export default function ChatRoomPage() {
                       </div>
                     ) : (
                       <div
-                        className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${
+                        className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line break-words [overflow-wrap:anywhere] ${
                           isChar
                             ? 'bg-slate-100 text-slate-900 rounded-tl-xs'
                             : 'bg-slate-900 text-white rounded-tr-xs'
@@ -819,37 +845,45 @@ export default function ChatRoomPage() {
             <div ref={bottomRef} />
           </div>
 
-          {/* Input Kirim Pesan */}
-          <div className="p-3.5 border-t border-slate-200 bg-slate-50/50">
-            <div className="flex items-end gap-2">
+          {/* Input Kirim Pesan (Sticky & Fixed di Bagian Bawah) */}
+          <div className="p-2.5 sm:p-3.5 border-t border-slate-200 bg-slate-50/70 backdrop-blur-xs pb-[max(0.625rem,env(safe-area-inset-bottom))] shrink-0 z-20">
+            <div className="flex items-center gap-2.5">
               <textarea
-                rows={2}
+                ref={textareaRef}
+                rows={1}
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage();
+                onChange={(e) => {
+                  setInputText(e.target.value);
+                  e.target.style.height = 'auto';
+                  if (e.target.value.trim()) {
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
+                  } else {
+                    e.target.style.height = '';
                   }
                 }}
-                placeholder={
-                  messages.length > 0
-                    ? `Kirim pesan ke ${character.name}... (Enter kosong untuk lanjut bicara, Shift+Enter baris baru)`
-                    : `Kirim pesan ke ${character.name}... (Enter untuk kirim, Shift+Enter baris baru)`
-                }
-                className="flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    const isMobileDevice =
+                      typeof window !== 'undefined' &&
+                      (window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 768);
+                    if (!isMobileDevice) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }
+                }}
+                placeholder={`Kirim pesan ke ${character.name}...`}
+                className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs"
               />
               <button
                 type="button"
                 disabled={sending || (!inputText.trim() && messages.length === 0)}
                 onClick={handleSendMessage}
-                className="h-[60px] px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0 transition-colors"
+                className="h-[48px] w-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
                 title={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
+                aria-label={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
               >
                 <Send className="w-4 h-4" />
-                <span className="hidden sm:inline">
-                  {inputText.trim() ? 'Kirim' : messages.length > 0 ? 'Lanjut' : 'Kirim'}
-                </span>
               </button>
             </div>
           </div>
@@ -857,8 +891,23 @@ export default function ChatRoomPage() {
 
         {/* Panel Samping: Pengaturan per Chat, Ringkasan Konteks, dan Pindah Ruang Chat */}
         {showDrawer && (
-          <aside className="w-80 bg-white rounded-2xl border border-slate-200 p-4 space-y-5 overflow-y-auto shrink-0 shadow-2xs">
-            <form onSubmit={handleSaveChatSettings} className="space-y-3.5">
+          <>
+            <div
+              className="fixed inset-0 bg-slate-900/40 z-30 sm:hidden backdrop-blur-2xs"
+              onClick={() => setShowDrawer(false)}
+            />
+            <aside className="fixed inset-y-0 right-0 z-40 w-80 max-w-[85vw] sm:static sm:z-auto sm:w-80 bg-white sm:rounded-2xl border-l sm:border border-slate-200 p-4 space-y-5 overflow-y-auto shrink-0 shadow-xl sm:shadow-2xs">
+              <div className="flex items-center justify-between sm:hidden pb-2 border-b border-slate-100">
+                <span className="text-xs font-bold text-slate-900">Pengaturan Chat</span>
+                <button
+                  type="button"
+                  onClick={() => setShowDrawer(false)}
+                  className="p-1 rounded-lg text-slate-500 hover:bg-slate-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <form onSubmit={handleSaveChatSettings} className="space-y-3.5">
               <h3 className="text-sm font-semibold text-slate-900">Pengaturan Percakapan Ini</h3>
 
               <div>
@@ -1005,7 +1054,8 @@ export default function ChatRoomPage() {
               </button>
             </div>
           </aside>
-        )}
+        </>
+      )}
       </div>
 
       <ConfirmModal

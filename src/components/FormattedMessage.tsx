@@ -26,7 +26,7 @@ export default function FormattedMessage({ content, isUser = false }: FormattedM
   const parts = content.split(regex);
 
   return (
-    <span className="inline">
+    <span className="inline break-words [overflow-wrap:anywhere]">
       {parts.map((part, index) => {
         if (!part) return null;
 

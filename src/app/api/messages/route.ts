@@ -116,8 +116,25 @@ async function generateCharacterTurn(params: {
     actionType: 'chat',
   });
 
+  let cleaned = cleanCharacterOutput(res.text, character.name);
+  if (!cleaned) {
+    // Jika output model hanya berisi tag tool call kosong atau tersaring habis, lakukan satu kali percobaan ulang
+    const retryRes = await generateLLMResponse(llmMessages, {
+      temperature: Math.min(1.0, effectiveTemp + 0.05),
+      maxTokens,
+      characterId: character.id,
+      chatId: chat.id,
+      actionType: 'chat',
+    });
+    cleaned = cleanCharacterOutput(retryRes.text, character.name);
+  }
+
+  if (!cleaned) {
+    throw new Error('Model menghasilkan respons teknis kosong. Silakan coba kirim atau generate ulang.');
+  }
+
   return {
-    text: cleanCharacterOutput(res.text, character.name),
+    text: cleaned,
     matchedLore: lore.matchedEntries,
     modelUsed: res.modelUsed,
   };
