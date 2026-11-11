@@ -99,6 +99,7 @@ export default function SettingsPage() {
         model: 'gemma-4-26b-a4b-it',
         temperature: '0.9',
         max_tokens: '1024',
+        default_reply_style: 'sedang',
         history_limit: '20',
         auto_summarize_threshold: '30',
         auto_extract_memory: 'true',
@@ -389,11 +390,16 @@ export default function SettingsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal menyimpan pengaturan.');
       if (data.settings) {
-        setSettings((prev) => ({
-          ...prev,
-          ...data.settings,
-          llm_api_key: data.settings.llm_api_key_masked || prev.llm_api_key || '',
-        }));
+        setSettings((prev) => {
+          const sObj = {
+            ...prev,
+            ...data.settings,
+            llm_api_key: data.settings.llm_api_key_masked || prev.llm_api_key || '',
+          };
+          setClientCache('settings_data', sObj);
+          return sObj;
+        });
+        invalidateClientCache('chat_room_');
       }
       setNotice('Pengaturan Base URL, model, dan konteks berhasil disimpan.');
     } catch (err) {
@@ -981,7 +987,7 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-3 border-t border-slate-100">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Temperature Default
@@ -1012,7 +1018,21 @@ export default function SettingsPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Batas Riwayat Pesan (N Terakhir)
+                    Gaya Balasan Default
+                  </label>
+                  <select
+                    value={settings.default_reply_style || 'sedang'}
+                    onChange={(e) => setSettings((s) => ({ ...s, default_reply_style: e.target.value }))}
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white"
+                  >
+                    <option value="sedang">Sedang (1-2 paragraf)</option>
+                    <option value="pendek">Pendek (1-3 kalimat)</option>
+                    <option value="panjang">Panjang (Deskriptif)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Batas Riwayat Pesan
                   </label>
                   <input
                     type="number"

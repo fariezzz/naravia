@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { replacePlaceholders } from '@/lib/character';
-import { CharacterRow, getDb, getDefaultPersona, getPersonaById } from '@/lib/db';
+import { CharacterRow, getDb, getDefaultPersona, getPersonaById, getSettingsMap } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
   try {
@@ -96,6 +96,20 @@ export async function POST(req: NextRequest) {
 
     const title = String(body.title || '').trim() || `Percakapan dengan ${character.name}`;
 
+    const settings = getSettingsMap();
+    const effectiveTemp =
+      character.temperature_override ??
+      (body.temperature !== undefined && body.temperature !== null && body.temperature !== ''
+        ? Number(body.temperature)
+        : parseFloat(settings.temperature || '0.9') || 0.9);
+
+    const effectiveMaxTokens =
+      body.maxTokens !== undefined && body.maxTokens !== null && body.maxTokens !== ''
+        ? Number(body.maxTokens)
+        : parseInt(settings.max_tokens || '1024', 10) || 1024;
+
+    const effectiveReplyStyle = body.replyStyle || settings.default_reply_style || 'sedang';
+
     db.prepare(`
       INSERT INTO chats (
         id, character_id, title, summary, summarized_until_msg_id,
@@ -106,9 +120,9 @@ export async function POST(req: NextRequest) {
       chatId,
       characterId,
       title,
-      character.temperature_override ?? null,
-      null,
-      body.replyStyle || 'sedang',
+      effectiveTemp,
+      effectiveMaxTokens,
+      effectiveReplyStyle,
       persona?.id || null,
       persona ? JSON.stringify(persona) : null,
       now,

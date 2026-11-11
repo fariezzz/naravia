@@ -378,6 +378,7 @@ function seedInitialData(db: DatabaseSync) {
     ollama_api_key: process.env.OLLAMA_API_KEY || '',
     temperature: '0.9',
     max_tokens: '1024',
+    default_reply_style: 'sedang',
     history_limit: '20',
     auto_summarize_threshold: '30',
     auto_extract_memory: 'true',

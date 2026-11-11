@@ -58,6 +58,7 @@ export async function PUT(req: NextRequest) {
       'ollama_api_key',
       'temperature',
       'max_tokens',
+      'default_reply_style',
       'history_limit',
       'auto_summarize_threshold',
       'auto_extract_memory',

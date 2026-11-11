@@ -7,6 +7,7 @@ import {
   getDb,
   getDefaultPersona,
   getPersonaById,
+  getSettingsMap,
   MessageRow,
 } from '@/lib/db';
 import { generateLLMResponse } from '@/lib/llm';
@@ -72,18 +73,32 @@ export async function GET(
       is_default: Boolean(p.is_default),
     }));
 
+    const settings = getSettingsMap();
+    const resolvedChat = {
+      ...chat,
+      persona_id: chat.persona_id || activePersona?.id || null,
+      use_latest_persona: Boolean(chat.use_latest_persona),
+      temperature:
+        chat.temperature ??
+        character.temperature_override ??
+        (parseFloat(settings.temperature || '0.9') || 0.9),
+      max_tokens: chat.max_tokens ?? (parseInt(settings.max_tokens || '1024', 10) || 1024),
+      reply_style: chat.reply_style || settings.default_reply_style || 'sedang',
+    };
+
     return NextResponse.json({
-      chat: {
-        ...chat,
-        persona_id: chat.persona_id || activePersona?.id || null,
-        use_latest_persona: Boolean(chat.use_latest_persona),
-      },
+      chat: resolvedChat,
       character: formatCharacterRow(character),
       messages,
       memories,
       otherChats,
       activePersona,
       personas,
+      defaultSettings: {
+        temperature: settings.temperature || '0.9',
+        max_tokens: settings.max_tokens || '1024',
+        default_reply_style: settings.default_reply_style || 'sedang',
+      },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Gagal memuat ruang percakapan.';

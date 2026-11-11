@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CharacterRow, getDb, GroupChatRow } from '@/lib/db';
+import { CharacterRow, getDb, getDefaultPersona, getSettingsMap, GroupChatRow } from '@/lib/db';
 
 export async function GET() {
   try {
@@ -63,10 +63,22 @@ export async function POST(req: NextRequest) {
 
     const resolvedTitle = title || `Grup: ${chars.map((c) => c.name).join(', ')}`;
 
+    const settings = getSettingsMap();
+    const defaultPersona = getDefaultPersona();
+    const temp =
+      body.temperature !== undefined && body.temperature !== null && body.temperature !== ''
+        ? Number(body.temperature)
+        : parseFloat(settings.temperature || '0.9') || 0.9;
+    const maxTokens =
+      body.maxTokens !== undefined && body.maxTokens !== null && body.maxTokens !== ''
+        ? Number(body.maxTokens)
+        : parseInt(settings.max_tokens || '1024', 10) || 1024;
+    const personaId = body.personaId ? String(body.personaId) : defaultPersona?.id || null;
+
     db.prepare(`
-      INSERT INTO group_chats (id, title, scenario, turn_mode, last_speaker_id, temperature, max_tokens, created_at, updated_at)
-      VALUES (?, ?, ?, ?, NULL, 0.9, 1024, ?, ?)
-    `).run(id, resolvedTitle, scenario, body.turn_mode || 'auto', now, now);
+      INSERT INTO group_chats (id, title, scenario, turn_mode, last_speaker_id, temperature, max_tokens, persona_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+    `).run(id, resolvedTitle, scenario, body.turn_mode || 'auto', temp, maxTokens, personaId, now, now);
 
     const insertMember = db.prepare(`
       INSERT INTO group_chat_members (group_chat_id, character_id, join_order)

@@ -92,15 +92,20 @@ export default function ChatRoomPage() {
   });
   const [tempInput, setTempInput] = useState(() => {
     const cached = getClientCache<any>(`chat_room_${chatId}`);
-    return String(cached?.chat?.temperature ?? cached?.character?.temperature_override ?? 0.9);
+    return String(
+      cached?.chat?.temperature ??
+      cached?.defaultSettings?.temperature ??
+      cached?.character?.temperature_override ??
+      0.9
+    );
   });
   const [maxTokensInput, setMaxTokensInput] = useState(() => {
     const cached = getClientCache<any>(`chat_room_${chatId}`);
-    return String(cached?.chat?.max_tokens ?? 1024);
+    return String(cached?.chat?.max_tokens ?? cached?.defaultSettings?.max_tokens ?? 1024);
   });
   const [replyStyleInput, setReplyStyleInput] = useState(() => {
     const cached = getClientCache<any>(`chat_room_${chatId}`);
-    return cached?.chat?.reply_style || 'sedang';
+    return cached?.chat?.reply_style || cached?.defaultSettings?.default_reply_style || 'sedang';
   });
   const [summarizing, setSummarizing] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -151,9 +156,13 @@ export default function ChatRoomPage() {
       setOtherChats(data.otherChats || []);
 
       setChatTitleInput(data.chat.title || '');
-      setTempInput(String(data.chat.temperature ?? data.character.temperature_override ?? 0.9));
-      setMaxTokensInput(String(data.chat.max_tokens ?? 1024));
-      setReplyStyleInput(data.chat.reply_style || 'sedang');
+      const defTemp = data.defaultSettings?.temperature ?? data.character?.temperature_override ?? '0.9';
+      const defMaxTokens = data.defaultSettings?.max_tokens ?? '1024';
+      const defReplyStyle = data.defaultSettings?.default_reply_style ?? 'sedang';
+
+      setTempInput(String(data.chat.temperature ?? defTemp));
+      setMaxTokensInput(String(data.chat.max_tokens ?? defMaxTokens));
+      setReplyStyleInput(data.chat.reply_style || defReplyStyle);
 
       setClientCache(`chat_room_${chatId}`, {
         chat: data.chat,
@@ -163,6 +172,7 @@ export default function ChatRoomPage() {
         otherChats: data.otherChats || [],
         personas: listPersonas,
         userPersona: personaItem,
+        defaultSettings: data.defaultSettings,
       });
     } catch (err) {
       if (!chat) {
