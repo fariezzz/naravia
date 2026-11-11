@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CharacterRow, formatCharacterRow, getDb } from '@/lib/db';
+import { deleteUploadAsset, replaceUploadAsset } from '@/lib/assets';
 
 export async function GET(
   _req: NextRequest,
@@ -150,6 +151,9 @@ export async function PUT(
           : String(body.research_notes || '')
         : existing.research_notes;
 
+    const oldAvatar = existing.avatar;
+    const newAvatar = body.avatar !== undefined ? String(body.avatar).trim() : existing.avatar;
+
     db.prepare(`
       UPDATE characters SET
         name = ?,
@@ -172,7 +176,7 @@ export async function PUT(
     `).run(
       name,
       body.tagline !== undefined ? String(body.tagline).trim() : existing.tagline,
-      body.avatar !== undefined ? String(body.avatar).trim() : existing.avatar,
+      newAvatar,
       body.description !== undefined ? String(body.description).trim() : existing.description,
       body.personality !== undefined ? String(body.personality).trim() : existing.personality,
       body.speaking_style !== undefined ? String(body.speaking_style).trim() : existing.speaking_style,
@@ -193,6 +197,11 @@ export async function PUT(
       id
     );
 
+    // Hapus file avatar lama jika pengguna mengganti foto profil karakter
+    if (oldAvatar && newAvatar && oldAvatar !== newAvatar) {
+      replaceUploadAsset(oldAvatar, newAvatar);
+    }
+
     const updated = (db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as unknown) as CharacterRow;
     return NextResponse.json({ character: formatCharacterRow(updated) });
   } catch (err) {
@@ -208,8 +217,18 @@ export async function DELETE(
   try {
     const { id } = await context.params;
     const db = getDb();
+    const existing = db
+      .prepare('SELECT avatar FROM characters WHERE id = ?')
+      .get(id) as { avatar?: string } | undefined;
+
     db.prepare('DELETE FROM memories WHERE character_id = ?').run(id);
     db.prepare('DELETE FROM characters WHERE id = ?').run(id);
+
+    // Hapus file fisik avatar dari disk jika tidak digunakan oleh entitas lain
+    if (existing?.avatar) {
+      deleteUploadAsset(existing.avatar);
+    }
+
     return NextResponse.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Gagal menghapus karakter.';

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
+import { deleteUploadAsset } from '@/lib/assets';
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,11 +15,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Pilih file gambar terlebih dahulu.' }, { status: 400 });
       }
 
-      const ext = path.extname(file.name).toLowerCase() || '.png';
+      const ext = path.extname(file.name).toLowerCase() || '.webp';
       const allowed = ['.png', '.jpg', '.jpeg', '.webp', '.svg'];
       if (!allowed.includes(ext)) {
         return NextResponse.json(
-          { error: 'Format gambar harus PNG, JPG, WEBP, atau SVG.' },
+          { error: 'Format gambar harus WEBP, PNG, JPG, JPEG, atau SVG.' },
           { status: 400 }
         );
       }
@@ -28,9 +29,16 @@ export async function POST(req: NextRequest) {
         fs.mkdirSync(uploadsDir, { recursive: true });
       }
 
-      const filename = `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 7)}${ext}`;
+      const prefix = file.name.toLowerCase().startsWith('persona-') ? 'persona' : 'avatar';
+      const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}${ext}`;
       const buffer = Buffer.from(await file.arrayBuffer());
       fs.writeFileSync(path.join(uploadsDir, filename), buffer);
+
+      // Jika ada referensi avatar sebelumnya yang digantikan dan belum tersimpan di database, bersihkan segera
+      const previousAvatarUrl = formData.get('previousAvatarUrl');
+      if (previousAvatarUrl && typeof previousAvatarUrl === 'string') {
+        deleteUploadAsset(previousAvatarUrl);
+      }
 
       return NextResponse.json({ avatarUrl: `/uploads/${filename}` });
     }

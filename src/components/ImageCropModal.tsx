@@ -159,11 +159,22 @@ export default function ImageCropModal({
       const blob = await new Promise<Blob>((resolve, reject) => {
         outCanvas.toBlob(
           (b) => {
-            if (b) resolve(b);
-            else reject(new Error('Gagal memproses gambar hasil crop.'));
+            if (b) {
+              resolve(b);
+            } else {
+              // Fallback aman jika peramban tidak mendukung image/webp
+              outCanvas.toBlob(
+                (fb) => {
+                  if (fb) resolve(fb);
+                  else reject(new Error('Gagal memproses gambar hasil crop.'));
+                },
+                'image/png',
+                0.95
+              );
+            }
           },
-          'image/png',
-          0.95
+          'image/webp',
+          0.9
         );
       });
 

@@ -249,8 +249,12 @@ export default function SettingsPage() {
     setError('');
     setNotice('');
     try {
+      const ext = blob.type === 'image/webp' ? '.webp' : '.png';
       const fd = new FormData();
-      fd.append('file', new File([blob], `persona-${Date.now()}.png`, { type: 'image/png' }));
+      fd.append('file', new File([blob], `persona-${Date.now()}${ext}`, { type: blob.type || 'image/webp' }));
+      if (persona.avatar && persona.avatar.startsWith('/uploads/')) {
+        fd.append('previousAvatarUrl', persona.avatar);
+      }
       const uploadRes = await fetch('/api/avatar', { method: 'POST', body: fd });
       const uploadData = await uploadRes.json();
       if (!uploadRes.ok) throw new Error(uploadData.error || 'Gagal mengunggah foto profil.');
@@ -476,10 +480,30 @@ export default function SettingsPage() {
       });
       if (!res.ok) throw new Error('Gagal menghapus seluruh data.');
       setResetModalOpen(false);
-      setNotice('Seluruh data percakapan dan karakter telah dihapus.');
+      setNotice('Seluruh data percakapan, karakter, dan aset foto yang tidak terpakai telah dihapus.');
       loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal mereset data.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCleanupAssets = async () => {
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cleanup_assets' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal membersihkan aset.');
+      setNotice(`Pembersihan selesai. ${data.deletedCount || 0} file gambar yatim berhasil dihapus.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal membersihkan aset.');
     } finally {
       setSaving(false);
     }
@@ -1128,6 +1152,26 @@ export default function SettingsPage() {
                   <Download className="w-3.5 h-3.5" />
                   <span>Unduh File SQLite</span>
                 </a>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-2xs">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Bersihkan File Aset Gambar Yatim
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Pindai folder <code>public/uploads/</code> dan hapus file foto profil lama atau sisa upload yang sudah tidak lagi terikat pada karakter maupun persona aktif.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={handleCleanupAssets}
+                  className="h-9 px-4 rounded-xl border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors shadow-2xs"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Bersihkan Aset Yatim</span>
+                </button>
               </div>
 
               <div className="bg-white rounded-2xl border border-rose-200 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-2xs">

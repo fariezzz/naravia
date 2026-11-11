@@ -8,6 +8,7 @@ import {
   invalidatePersonasCache,
   UserPersonaRow,
 } from '@/lib/db';
+import { deleteUploadAsset, replaceUploadAsset } from '@/lib/assets';
 
 function syncDefaultToLegacyTable(persona: UserPersonaRow | null) {
   if (!persona) return;
@@ -183,6 +184,11 @@ export async function PUT(req: NextRequest) {
       existing.id
     );
 
+    // Hapus file avatar persona lama jika diganti dengan yang baru
+    if (existing.avatar && avatar && existing.avatar !== avatar) {
+      replaceUploadAsset(existing.avatar, avatar);
+    }
+
     invalidatePersonasCache();
     const updated = getPersonaById(existing.id);
     if (updated && updated.is_default) {
@@ -232,6 +238,11 @@ export async function DELETE(req: NextRequest) {
     const target = all.find((p) => p.id === id);
     db.prepare('DELETE FROM user_personas WHERE id = ?').run(id);
     invalidatePersonasCache();
+
+    // Hapus fisik aset avatar persona jika tidak digunakan oleh karakter atau persona lain
+    if (target?.avatar) {
+      deleteUploadAsset(target.avatar);
+    }
 
     const remaining = getAllPersonas();
     if (target?.is_default && remaining.length > 0) {

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb, getSettingsMap, updateSettingsMap } from '@/lib/db';
 import { generateLLMResponse } from '@/lib/llm';
+import { cleanupOrphanedUploads } from '@/lib/assets';
 
 export async function GET() {
   try {
@@ -218,7 +219,14 @@ export async function POST(req: NextRequest) {
         DELETE FROM characters;
         DELETE FROM token_usage;
       `);
+      // Bersihkan seluruh file upload yang tidak lagi terikat ke entitas database aktif
+      cleanupOrphanedUploads();
       return NextResponse.json({ success: true });
+    }
+
+    if (body.action === 'cleanup_assets') {
+      const deletedCount = cleanupOrphanedUploads();
+      return NextResponse.json({ success: true, deletedCount });
     }
 
     return NextResponse.json({ error: 'Aksi tidak dikenali.' }, { status: 400 });

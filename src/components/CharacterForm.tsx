@@ -247,8 +247,12 @@ export default function CharacterForm({
   const handleConfirmCroppedAvatar = async (blob: Blob) => {
     setError('');
     try {
+      const ext = blob.type === 'image/webp' ? '.webp' : '.png';
       const fd = new FormData();
-      fd.append('file', new File([blob], `avatar-${Date.now()}.png`, { type: 'image/png' }));
+      fd.append('file', new File([blob], `avatar-${Date.now()}${ext}`, { type: blob.type || 'image/webp' }));
+      if (form.avatar && form.avatar.startsWith('/uploads/')) {
+        fd.append('previousAvatarUrl', form.avatar);
+      }
       const res = await fetch('/api/avatar', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal mengunggah avatar.');
