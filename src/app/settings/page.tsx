@@ -997,7 +997,8 @@ export default function SettingsPage() {
                     step="0.05"
                     min="0.1"
                     max="1.5"
-                    value={settings.temperature || '0.9'}
+                    value={settings.temperature ?? ''}
+                    placeholder="0.9"
                     onChange={(e) => setSettings((s) => ({ ...s, temperature: e.target.value }))}
                     className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
                   />
@@ -1011,7 +1012,8 @@ export default function SettingsPage() {
                     step="64"
                     min="128"
                     max="4096"
-                    value={settings.max_tokens || '1024'}
+                    value={settings.max_tokens ?? ''}
+                    placeholder="1024"
                     onChange={(e) => setSettings((s) => ({ ...s, max_tokens: e.target.value }))}
                     className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
                   />
@@ -1038,7 +1040,8 @@ export default function SettingsPage() {
                     type="number"
                     min="4"
                     max="100"
-                    value={settings.history_limit || '20'}
+                    value={settings.history_limit ?? ''}
+                    placeholder="20"
                     onChange={(e) => setSettings((s) => ({ ...s, history_limit: e.target.value }))}
                     className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
                   />

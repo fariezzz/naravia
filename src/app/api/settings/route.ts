@@ -83,6 +83,16 @@ export async function PUT(req: NextRequest) {
       }
     }
 
+    if (updates.temperature !== undefined && (!updates.temperature || isNaN(Number(updates.temperature)))) {
+      updates.temperature = '0.9';
+    }
+    if (updates.max_tokens !== undefined && (!updates.max_tokens || isNaN(Number(updates.max_tokens)))) {
+      updates.max_tokens = '1024';
+    }
+    if (updates.history_limit !== undefined && (!updates.history_limit || isNaN(Number(updates.history_limit)))) {
+      updates.history_limit = '20';
+    }
+
     // Jaga sinkronisasi backward-compatibility hanya jika llm_api_key benar-benar diubah
     if (updates.llm_api_key !== undefined) {
       updates.google_api_key = updates.llm_api_key;
