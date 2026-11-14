@@ -462,6 +462,24 @@ export default function CharacterProfilePage() {
                   {character.research_notes.sources.join(' • ')}
                 </div>
               )}
+              {character.research_notes.revision_verification && (
+                <div
+                  className={`mt-2 p-3 rounded-xl border text-xs space-y-1 ${
+                    character.research_notes.revision_verification.valid
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                      : 'bg-rose-50 border-rose-200 text-rose-950'
+                  }`}
+                >
+                  <div className="font-semibold">
+                    {character.research_notes.revision_verification.valid
+                      ? 'Status Verifikasi Revisi: Terverifikasi Sesuai Fakta'
+                      : 'Status Verifikasi Revisi: Catatan Koreksi Kanon'}
+                  </div>
+                  <p className="leading-relaxed">
+                    {character.research_notes.revision_verification.explanation}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

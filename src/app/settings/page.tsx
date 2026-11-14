@@ -927,7 +927,7 @@ export default function SettingsPage() {
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-xs font-semibold text-slate-700">
-                      Nama / ID Model
+                      Nama / ID Model Chatting
                     </label>
                     <button
                       type="button"
@@ -960,7 +960,7 @@ export default function SettingsPage() {
                             setSettings((s) => ({ ...s, model: e.target.value }));
                           }
                         }}
-                        className="mt-1.5 w-full h-8 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50/40 text-xs text-slate-800 font-mono"
+                        className="mt-1.5 w-full h-8 px-2.5 rounded-lg border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-[#111827] text-xs text-slate-800 dark:text-slate-100 font-mono focus:outline-none"
                       >
                         <option value="">-- Pilih dari {availableModels.length} model tersedia --</option>
                         {availableModels.map((m) => (
@@ -975,7 +975,7 @@ export default function SettingsPage() {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    API Key Provider (Opsional untuk server lokal tanpa auth)
+                    API Key Chatting (Opsional untuk server lokal tanpa auth)
                   </label>
                   <input
                     type="password"
@@ -984,6 +984,60 @@ export default function SettingsPage() {
                     placeholder="Masukkan API Key provider Anda..."
                     className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
                   />
+                </div>
+              </div>
+
+              {/* Pemisahan Model Khusus Riset Karakter */}
+              <div className="pt-4 border-t border-slate-100/80 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900">Model Khusus Riset & Verifikasi Fakta</h4>
+                    <p className="text-[11px] text-slate-500">
+                      Opsional. Jika dikosongkan, sistem akan otomatis menggunakan model chatting utama di atas.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Nama / ID Model Riset
+                    </label>
+                    <input
+                      type="text"
+                      list="provider-models-list"
+                      value={settings.research_model || ''}
+                      onChange={(e) => setSettings((s) => ({ ...s, research_model: e.target.value }))}
+                      placeholder={settings.model || 'Gunakan model chatting utama'}
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Base URL Riset (Opsional)
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.research_llm_base_url || ''}
+                      onChange={(e) => setSettings((s) => ({ ...s, research_llm_base_url: e.target.value }))}
+                      placeholder={settings.llm_base_url || 'Sama dengan Base URL utama'}
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      API Key Riset (Opsional)
+                    </label>
+                    <input
+                      type="password"
+                      value={settings.research_llm_api_key || ''}
+                      onChange={(e) => setSettings((s) => ({ ...s, research_llm_api_key: e.target.value }))}
+                      placeholder={settings.has_research_api_key === 'true' ? '••••••••' : 'Sama dengan API Key utama'}
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
+                    />
+                  </div>
                 </div>
               </div>
 

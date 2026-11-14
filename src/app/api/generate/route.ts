@@ -3,7 +3,11 @@ import { buildCharacterSystemPrompt } from '@/lib/character';
 import { CharacterRow, getDefaultPersona } from '@/lib/db';
 import { cleanCharacterOutput, generateLLMResponse } from '@/lib/llm';
 import { getRelevantLore } from '@/lib/lore';
-import { generateCharacterFromIdea } from '@/lib/research';
+import {
+  generateCharacterFromIdea,
+  reviseCharacterDraft,
+  verifyResearchRevision,
+} from '@/lib/research';
 
 export async function POST(req: NextRequest) {
   try {
@@ -63,6 +67,39 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         reply: cleanCharacterOutput(reply.text, tempCharRow.name),
         modelUsed: reply.modelUsed,
+      });
+    }
+
+    // Mode 3: Revisi Riset Berdasarkan Masukan Pengguna dengan Verifikasi Fakta
+    if (body.mode === 'revise') {
+      const currentDraft = body.currentDraft;
+      const revisionRequest = String(body.revisionRequest || '').trim();
+      if (!currentDraft || !revisionRequest) {
+        return NextResponse.json(
+          { error: 'Draf karakter saat ini dan instruksi revisi wajib disertakan.' },
+          { status: 400 }
+        );
+      }
+
+      // 1. Verifikasi fakta terlebih dahulu
+      const verification = await verifyResearchRevision({
+        characterName: currentDraft.name || 'Karakter',
+        currentDraft,
+        revisionRequest,
+        characterTypeHint: body.characterTypeHint || currentDraft.research_notes?.mode || 'auto',
+      });
+
+      // 2. Lakukan riset ulang dan modifikasi draf
+      const revisedDraft = await reviseCharacterDraft({
+        currentDraft,
+        revisionRequest,
+        verification,
+        characterTypeHint: body.characterTypeHint || currentDraft.research_notes?.mode || 'auto',
+      });
+
+      return NextResponse.json({
+        draft: revisedDraft,
+        verification,
       });
     }
 

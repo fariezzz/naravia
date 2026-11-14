@@ -110,6 +110,11 @@ export default function CharacterForm({
   const [previewInput, setPreviewInput] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
 
+  // State Revisi Riset Berbasis Verifikasi Fakta
+  const [revisionInput, setRevisionInput] = useState('');
+  const [revising, setRevising] = useState(false);
+  const [verificationResult, setVerificationResult] = useState<{ valid: boolean; explanation: string } | null>(null);
+
   useEffect(() => {
     fetch('/api/worlds')
       .then((r) => r.json())
@@ -227,6 +232,79 @@ export default function CharacterForm({
     } finally {
       setImporting(false);
       e.target.value = '';
+    }
+  };
+
+  const handleApplyRevision = async () => {
+    if (!revisionInput.trim()) {
+      setError('Tuliskan poin revisi atau fakta yang ingin Anda perbaiki terlebih dahulu.');
+      return;
+    }
+    setRevising(true);
+    setError('');
+    setNotice('');
+    setVerificationResult(null);
+    try {
+      const currentDraftPayload = {
+        name: form.name,
+        tagline: form.tagline,
+        description: form.description,
+        personality: form.personality,
+        speaking_style: form.speaking_style,
+        scenario: form.scenario,
+        greeting: form.greeting,
+        example_dialogues: form.example_dialogues,
+        tags: form.tags,
+        research_notes: form.research_notes,
+      };
+
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'revise',
+          currentDraft: currentDraftPayload,
+          revisionRequest: revisionInput.trim(),
+          characterTypeHint: charTypeHint,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal memproses revisi riset.');
+
+      const revisedDraft = data.draft;
+      const verification = data.verification;
+      setVerificationResult(verification);
+
+      setForm((prev) => ({
+        ...prev,
+        name: revisedDraft.name || prev.name,
+        tagline: revisedDraft.tagline || prev.tagline,
+        description: revisedDraft.description || prev.description,
+        personality: revisedDraft.personality || prev.personality,
+        speaking_style: revisedDraft.speaking_style || prev.speaking_style,
+        scenario: revisedDraft.scenario || prev.scenario,
+        greeting: Array.isArray(revisedDraft.greeting) && revisedDraft.greeting.length > 0 ? revisedDraft.greeting : prev.greeting,
+        example_dialogues: Array.isArray(revisedDraft.example_dialogues) && revisedDraft.example_dialogues.length > 0 ? revisedDraft.example_dialogues : prev.example_dialogues,
+        tags: Array.isArray(revisedDraft.tags) ? revisedDraft.tags : prev.tags,
+        research_notes: revisedDraft.research_notes || prev.research_notes,
+      }));
+
+      setTagInput(Array.isArray(revisedDraft.tags) ? revisedDraft.tags.join(', ') : '');
+      if (revisedDraft.greeting?.[0]) {
+        setPreviewMessages([{ role: 'character', content: revisedDraft.greeting[0] }]);
+      }
+
+      if (verification?.valid) {
+        setNotice('Revisi riset diverifikasi sesuai fakta dan draf karakter berhasil diperbarui!');
+        setRevisionInput('');
+      } else {
+        setNotice('Catatan verifikasi: Revisi mengandung hal yang tidak sesuai dengan fakta kanon/resmi. Simak penjelasannya di bawah.');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memproses revisi riset.');
+    } finally {
+      setRevising(false);
     }
   };
 
@@ -531,7 +609,7 @@ export default function CharacterForm({
         <div className="lg:col-span-2 space-y-5">
           {/* Ringkasan Riset Otomatis jika tersedia */}
           {form.research_notes?.summary && (
-            <div className="bg-indigo-50/70 rounded-2xl border border-indigo-200 p-4 space-y-2">
+            <div className="bg-indigo-50/70 rounded-2xl border border-indigo-200 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-indigo-900">
                   Catatan Riset Karakter ({form.research_notes.mode === 'existing' ? 'Tokoh Kanon' : form.research_notes.mode === 'import' ? 'Impor Kartu' : 'Pengembangan Orisinal'})
@@ -549,6 +627,60 @@ export default function CharacterForm({
                   Periksa kembali field berikut karena dirangkum dari ingatan model: {form.research_notes.uncertainFields.join(', ')}
                 </div>
               )}
+
+              {/* Tampilkan Hasil Verifikasi Revisi Sebelumnya jika ada */}
+              {verificationResult && (
+                <div
+                  className={`p-3 rounded-xl border text-xs space-y-1 ${
+                    verificationResult.valid
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                      : 'bg-rose-50 border-rose-300 text-rose-950'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <span>
+                      {verificationResult.valid
+                        ? 'Verifikasi Fakta: Terverifikasi Sesuai'
+                        : 'Verifikasi Fakta: Tidak Sesuai Fakta Resmi/Kanon'}
+                    </span>
+                  </div>
+                  <p className="leading-relaxed">{verificationResult.explanation}</p>
+                </div>
+              )}
+
+              {/* Input Revisi Riset Berbasis Verifikasi Fakta */}
+              <div className="pt-2 border-t border-indigo-200/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-indigo-950">
+                    Revisi Riset & Fakta Karakter
+                  </label>
+                  <span className="text-[10px] text-indigo-700">Diverifikasi kebenaran faktanya sebelum diterapkan</span>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={revisionInput}
+                    onChange={(e) => setRevisionInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleApplyRevision();
+                      }
+                    }}
+                    placeholder='Contoh: "Ubah umurnya jadi 17 tahun dan tambahkan bahwa dia punya adik perempuan bernama Alisa"'
+                    className="flex-1 h-9 px-3 rounded-xl border border-indigo-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    disabled={revising || !revisionInput.trim()}
+                    onClick={handleApplyRevision}
+                    className="h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0 transition-colors shadow-2xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{revising ? 'Memverifikasi...' : 'Verifikasi & Terapkan Revisi'}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

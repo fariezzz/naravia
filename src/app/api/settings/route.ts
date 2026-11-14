@@ -24,12 +24,20 @@ export async function GET() {
       process.env.OPENAI_BASE_URL ||
       'https://generativelanguage.googleapis.com/v1beta';
 
+    const rawResearchKey =
+      settings.research_llm_api_key ||
+      process.env.RESEARCH_LLM_API_KEY ||
+      '';
+    const hasResearchKey = Boolean(rawResearchKey.trim());
+
     return NextResponse.json({
       settings: {
         ...settings,
         llm_base_url: resolvedBaseUrl,
         has_api_key: hasKey ? 'true' : 'false',
         llm_api_key_masked: hasKey ? maskKey(rawKey) : '',
+        has_research_api_key: hasResearchKey ? 'true' : 'false',
+        research_llm_api_key_masked: hasResearchKey ? maskKey(rawResearchKey) : '',
       },
     });
   } catch (err) {
@@ -52,6 +60,9 @@ export async function PUT(req: NextRequest) {
       'llm_base_url',
       'llm_api_key',
       'model',
+      'research_llm_base_url',
+      'research_llm_api_key',
+      'research_model',
       'google_api_key',
       'ollama_base_url',
       'ollama_model',
@@ -68,7 +79,7 @@ export async function PUT(req: NextRequest) {
     ];
 
     const updates: Record<string, string> = {};
-    const keyFields = new Set(['llm_api_key', 'google_api_key', 'search_api_key', 'ollama_api_key']);
+    const keyFields = new Set(['llm_api_key', 'research_llm_api_key', 'google_api_key', 'search_api_key', 'ollama_api_key']);
 
     for (const key of allowedKeys) {
       if (body[key] !== undefined) {

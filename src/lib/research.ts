@@ -1,6 +1,11 @@
 import { getSettingsMap } from './db';
 import { generateLLMResponse } from './llm';
 
+export interface RevisionVerificationResult {
+  valid: boolean;
+  explanation: string;
+}
+
 export interface GeneratedCharacterDraft {
   name: string;
   tagline: string;
@@ -16,6 +21,8 @@ export interface GeneratedCharacterDraft {
     summary: string;
     sources: string[];
     uncertainFields: string[];
+    revision_feedback?: string;
+    revision_verification?: RevisionVerificationResult;
   };
 }
 
@@ -170,7 +177,7 @@ Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika m
     {
       temperature: 0.75,
       maxTokens: 4096,
-      actionType: 'generate',
+      actionType: 'research',
       jsonMode: true,
     }
   );
@@ -237,6 +244,192 @@ Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika m
       uncertainFields,
     },
   };
+}
+
+/**
+ * Memverifikasi revisi riset pengguna:
+ * Mengecek apakah masukan revisi sesuai fakta kanon/sejarah (jika karakter fiksi/nyata yang sudah ada),
+ * atau konsisten dan masuk akal secara lore (jika karakter orisinal).
+ */
+export async function verifyResearchRevision(params: {
+  characterName: string;
+  currentDraft: Partial<GeneratedCharacterDraft>;
+  revisionRequest: string;
+  characterTypeHint?: 'auto' | 'existing' | 'original';
+}): Promise<RevisionVerificationResult> {
+  const { characterName, currentDraft, revisionRequest, characterTypeHint } = params;
+
+  // Lakukan pencarian web jika ada provider pencarian aktif untuk memvalidasi fakta kanon
+  let webContext = '';
+  if (characterTypeHint !== 'original') {
+    const searchRes = await performOptionalWebSearch(`${characterName} ${revisionRequest}`);
+    webContext = searchRes.snippets;
+  }
+
+  const verifyInstruction = `Kamu adalah verifikator fakta dan konsistensi karakter AI untuk platform Naravia.
+Tugasmu adalah menganalisis permintaan "Revisi Riset" dari pengguna terhadap kartu karakter "${characterName}".
+
+KRITERIA EVALUASI:
+1. Jika karakter berasal dari karya fiksi/sejarah yang sudah ada (existing):
+   - Periksa apakah poin revisi yang diminta pengguna SESUAI dengan fakta kanon/resmi karya tersebut.
+   - Jika klaim pengguna bertentangan dengan kanon resmi (misalnya mengubah latar keluarga yang salah, umur yang melenceng jauh dari kanon, atau sifat yang bertentangan 180 derajat tanpa alasan AU), tandai "valid": false dan berikan penjelasan fakta kanon yang benar secara sopan dan objektif dalam Bahasa Indonesia.
+   - Jika revisi valid atau merupakan variasi/interpretasi skenario yang dapat diterima, tandai "valid": true dengan penjelasan singkat bahwa fakta tersebut diverifikasi/dapat diterapkan.
+2. Jika karakter adalah karakter orisinal (original):
+   - Periksa apakah revisi logis dan tidak merusak integritas konsep awal karakter. Jika masuk akal, tandai "valid": true.
+
+FORMAT KELUARAN:
+Kembalikan HANYA format JSON valid berikut (tanpa teks di luar JSON):
+{
+  "valid": true | false,
+  "explanation": "Penjelasan rinci mengapa revisi ini sesuai fakta atau mengapa bertentangan dengan fakta kanon/resmi dalam Bahasa Indonesia (2-4 kalimat)."
+}`;
+
+  const userContext = `NAMA KARAKTER: ${characterName}
+DRAF SAAT INI:
+- Deskripsi: ${currentDraft.description || '-'}
+- Kepribadian: ${currentDraft.personality || '-'}
+- Skenario: ${currentDraft.scenario || '-'}
+- Gaya Bicara: ${currentDraft.speaking_style || '-'}
+
+PERMINTAAN REVISI DARI PENGGUNA:
+"${revisionRequest}"
+
+${webContext ? `REFERENSI DARI WEB:\n${webContext.slice(0, 4000)}` : ''}`;
+
+  const res = await generateLLMResponse(
+    [
+      { role: 'system', content: verifyInstruction },
+      { role: 'user', content: userContext },
+    ],
+    {
+      temperature: 0.2,
+      maxTokens: 800,
+      actionType: 'research',
+      jsonMode: true,
+    }
+  );
+
+  const parsed = extractJsonObject(res.text);
+  if (parsed && typeof parsed.valid === 'boolean') {
+    return {
+      valid: parsed.valid,
+      explanation: String(parsed.explanation || (parsed.valid ? 'Revisi diverifikasi sesuai fakta.' : 'Revisi tidak sesuai dengan fakta kanon.')).trim(),
+    };
+  }
+
+  return {
+    valid: true,
+    explanation: 'Revisi diterima dan diselaraskan ke dalam draf karakter.',
+  };
+}
+
+/**
+ * Melakukan riset ulang dan merevisi draf karakter berdasarkan revisi yang terverifikasi.
+ */
+export async function reviseCharacterDraft(params: {
+  currentDraft: GeneratedCharacterDraft;
+  revisionRequest: string;
+  verification: RevisionVerificationResult;
+  characterTypeHint?: 'auto' | 'existing' | 'original';
+}): Promise<GeneratedCharacterDraft> {
+  const { currentDraft, revisionRequest, verification, characterTypeHint } = params;
+
+  let webSearchContext = '';
+  if (characterTypeHint !== 'original') {
+    const searchRes = await performOptionalWebSearch(`${currentDraft.name} ${revisionRequest}`);
+    webSearchContext = searchRes.snippets;
+  }
+
+  const systemInstruction = `Kamu adalah perancang karakter roleplay profesional untuk aplikasi Naravia.
+Tugasmu adalah merevisi dan memperbarui kartu karakter "${currentDraft.name}" berdasarkan catatan revisi pengguna dan hasil verifikasi fakta.
+
+HASIL VERIFIKASI FAKTA:
+- Status Validitas: ${verification.valid ? 'VALID (Terapkan revisi ini)' : 'TIDAK VALID / KONTRA-FAKTA'}
+- Catatan Verifikasi: ${verification.explanation}
+
+PANDUAN PEMBARUAN:
+1. Jika status validitas VALID: Perbarui bagian yang relevan (deskripsi, kepribadian, skenario, sapaan, contoh dialog, atau tags) sesuai permintaan revisi pengguna dengan tetap menjaga kekompakan kartu karakter.
+2. Jika status TIDAK VALID: Pertahankan fakta kanon yang benar seperti yang dijelaskan dalam catatan verifikasi, tetapi kamu boleh menyesuaikan aspek gaya atau nuansa tanpa merusak kebenaran fakta kanon.
+3. Selalu perbarui ringkasan "research_notes.summary" untuk mencatat poin revisi yang telah diproses.
+
+Kembalikan HANYA objek JSON valid dengan struktur persis sama seperti kartu karakter sebelumnya:
+{
+  "name": "${currentDraft.name}",
+  "tagline": "...",
+  "description": "...",
+  "personality": "...",
+  "speaking_style": "...",
+  "scenario": "...",
+  "greeting": ["...", "..."],
+  "example_dialogues": [
+    { "user": "...", "char": "..." }
+  ],
+  "tags": ["..."],
+  "research_notes": {
+    "mode": "${currentDraft.research_notes?.mode || 'existing'}",
+    "summary": "Ringkasan draf yang telah diselaraskan dengan revisi",
+    "sources": ${JSON.stringify(currentDraft.research_notes?.sources || [])},
+    "uncertainFields": []
+  }
+}`;
+
+  const userPrompt = `DRAF SEBELUMNYA:
+${JSON.stringify(currentDraft, null, 2)}
+
+PERMINTAAN REVISI PENGGUNA:
+"${revisionRequest}"
+
+${webSearchContext ? `REFERENSI TAMBAHAN DARI WEB:\n${webSearchContext.slice(0, 5000)}` : ''}`;
+
+  const res = await generateLLMResponse(
+    [
+      { role: 'system', content: systemInstruction },
+      { role: 'user', content: userPrompt },
+    ],
+    {
+      temperature: 0.7,
+      maxTokens: 4096,
+      actionType: 'research',
+      jsonMode: true,
+    }
+  );
+
+  const parsed = extractJsonObject(res.text);
+  if (!parsed) {
+    throw new Error('Gagal merangkum hasil revisi kartu karakter.');
+  }
+
+  const updatedDraft = {
+    ...currentDraft,
+    name: String(parsed.name || currentDraft.name).trim(),
+    tagline: String(parsed.tagline || currentDraft.tagline).trim(),
+    description: String(parsed.description || currentDraft.description).trim(),
+    personality: String(parsed.personality || currentDraft.personality).trim(),
+    speaking_style: String(parsed.speaking_style || currentDraft.speaking_style).trim(),
+    scenario: String(parsed.scenario || currentDraft.scenario).trim(),
+    greeting: Array.isArray(parsed.greeting) && parsed.greeting.length > 0
+      ? parsed.greeting.map((g: unknown) => String(g || '').trim()).filter(Boolean)
+      : currentDraft.greeting,
+    example_dialogues: Array.isArray(parsed.example_dialogues) && parsed.example_dialogues.length > 0
+      ? parsed.example_dialogues.map((d: any) => ({
+          user: String(d.user || '').trim(),
+          char: String(d.char || '').trim(),
+        }))
+      : currentDraft.example_dialogues,
+    tags: Array.isArray(parsed.tags) && parsed.tags.length > 0
+      ? parsed.tags.map((t: unknown) => String(t || '').trim()).filter(Boolean)
+      : currentDraft.tags,
+    research_notes: {
+      ...currentDraft.research_notes,
+      summary: String(parsed.research_notes?.summary || currentDraft.research_notes?.summary || '').trim(),
+      sources: Array.isArray(parsed.research_notes?.sources) ? parsed.research_notes.sources : currentDraft.research_notes?.sources || [],
+      uncertainFields: Array.isArray(parsed.research_notes?.uncertainFields) ? parsed.research_notes.uncertainFields : [],
+      revision_feedback: revisionRequest,
+      revision_verification: verification,
+    },
+  };
+
+  return updatedDraft;
 }
 
 function extractJsonObject(text: string): Record<string, any> | null {

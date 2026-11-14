@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Send, MessageSquare, AlertCircle, X } from 'lucide-react';
+import { ArrowLeft, Send, MessageSquare, AlertCircle, X, Copy, Check } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import FormattedMessage from '@/components/FormattedMessage';
 import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
@@ -45,9 +45,34 @@ export default function GroupChatRoomPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [inputText, setInputText] = useState('');
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleCopyMessage = async (msgId: string, text: string) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedMsgId(msgId);
+      setTimeout(() => {
+        setCopiedMsgId((prev) => (prev === msgId ? null : prev));
+      }, 2000);
+    } catch {
+      setError('Gagal menyalin teks pesan.');
+    }
+  };
 
   const loadGroupRoom = async (isBackground = false) => {
     if (!isBackground) {
@@ -237,17 +262,17 @@ export default function GroupChatRoomPage() {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden max-w-5xl w-full mx-auto px-0 sm:px-4 py-0 sm:py-3 min-h-0">
       {/* Header Grup (Sticky & Fixed di Atas) */}
-      <div className="bg-white border-b sm:border border-slate-200 px-3.5 sm:px-4 py-2 sm:py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-3 sm:rounded-2xl shadow-2xs shrink-0 z-20">
+      <div className="bg-white dark:bg-[#0c1220] border-b sm:border border-slate-200 dark:border-slate-800 px-3.5 sm:px-4 py-2 sm:py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-3 sm:rounded-2xl shadow-2xs shrink-0 z-20 transition-colors">
         <div className="flex items-center gap-3 min-w-0">
           <Link
             href="/groups"
-            className="w-8 h-8 rounded-lg border border-slate-200 inline-flex items-center justify-center text-slate-600 hover:bg-slate-50 shrink-0"
+            className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-800 inline-flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
           >
             <ArrowLeft className="w-4 h-4" />
           </Link>
           <div className="min-w-0">
-            <h1 className="text-sm font-bold text-slate-900 truncate">{groupChat.title}</h1>
-            <p className="text-[11px] text-slate-500 truncate">
+            <h1 className="text-sm font-bold text-slate-900 dark:text-white truncate">{groupChat.title}</h1>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
               Anggota: {members.map((m) => m.name).join(', ')}
             </p>
           </div>
@@ -257,7 +282,7 @@ export default function GroupChatRoomPage() {
         <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
           {personas.length > 0 && (
             <div
-              className="h-7 pl-1 pr-2 rounded-lg border border-slate-200 bg-slate-50/70 inline-flex items-center gap-1.5 mr-1 shrink-0"
+              className="h-7 pl-1 pr-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/70 inline-flex items-center gap-1.5 mr-1 shrink-0"
               title="Ganti Persona Kamu di Grup Ini"
             >
               <CharacterAvatar
@@ -269,7 +294,7 @@ export default function GroupChatRoomPage() {
                 value={userPersona.id || ''}
                 onChange={(e) => handleSwitchGroupPersona(e.target.value)}
                 aria-label="Pilih Persona"
-                className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer max-w-[110px] truncate"
+                className="bg-transparent text-xs text-slate-700 dark:text-slate-200 font-medium focus:outline-none cursor-pointer max-w-[100px] truncate"
               >
                 {personas.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -311,10 +336,10 @@ export default function GroupChatRoomPage() {
       )}
 
       {/* Area Pesan Grup */}
-      <div className="flex-1 bg-white border-0 sm:border border-slate-200 mt-0 sm:mt-3 flex flex-col overflow-hidden sm:rounded-2xl shadow-none sm:shadow-2xs">
+      <div className="flex-1 bg-white dark:bg-[#0c1220] border-0 sm:border border-slate-200 dark:border-slate-800 mt-0 sm:mt-3 flex flex-col overflow-hidden sm:rounded-2xl shadow-none sm:shadow-2xs transition-colors">
         <div className="flex-1 overflow-y-auto px-3.5 py-4 sm:p-6 space-y-4 sm:space-y-5">
           {messages.length === 0 ? (
-            <div className="p-6 text-center text-xs text-slate-500 space-y-2">
+            <div className="p-6 text-center text-xs text-slate-500 dark:text-slate-400 space-y-2">
               <p>Ruang grup siap dimulai.</p>
               <p>
                 Kirim pesan di bawah (sebut nama karakter untuk memanggil gilirannya), atau klik tombol nama karakter di atas agar mereka memulai percakapan.
@@ -340,17 +365,40 @@ export default function GroupChatRoomPage() {
                       isChar ? 'items-start' : 'items-end flex flex-col'
                     }`}
                   >
-                    <span className="text-xs font-semibold text-slate-700 px-1">
+                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 px-1">
                       {isChar ? msg.character_name : userPersona.display_name || 'Kamu'}
                     </span>
                     <div
                       className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line break-words [overflow-wrap:anywhere] ${
                         isChar
-                          ? 'bg-slate-100 text-slate-900 rounded-tl-xs'
-                          : 'bg-slate-900 text-white rounded-tr-xs'
+                          ? 'bg-slate-100 dark:bg-[#151c2e] text-slate-900 dark:text-slate-100 rounded-tl-xs'
+                          : 'bg-slate-900 dark:bg-indigo-600 text-white rounded-tr-xs'
                       }`}
                     >
                       <FormattedMessage content={msg.content} isUser={!isChar} />
+                    </div>
+
+                    <div className="flex items-center gap-1.5 px-1 text-slate-400 dark:text-slate-500">
+                      <button
+                        type="button"
+                        onClick={() => handleCopyMessage(msg.id, msg.content)}
+                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 text-[11px] transition-colors ${
+                          copiedMsgId === msg.id ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'hover:text-slate-700 dark:hover:text-slate-200'
+                        }`}
+                        title="Salin Isi Pesan"
+                      >
+                        {copiedMsgId === msg.id ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            <span>Tersalin</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Salin</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
                   {!isChar && (
@@ -366,7 +414,7 @@ export default function GroupChatRoomPage() {
           )}
 
           {sending && (
-            <div className="text-xs text-slate-400 italic px-2">
+            <div className="text-xs text-slate-400 dark:text-slate-500 italic px-2">
               Karakter sedang menyusun tanggapan...
             </div>
           )}
@@ -375,7 +423,7 @@ export default function GroupChatRoomPage() {
         </div>
 
         {/* Input Kirim Pesan Grup (Sticky & Fixed di Bawah) */}
-        <div className="p-2.5 sm:p-3.5 border-t border-slate-200 bg-slate-50/70 backdrop-blur-xs flex items-center gap-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shrink-0 z-20">
+        <div className="p-2.5 sm:p-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#0c1220]/90 backdrop-blur-xs flex items-center gap-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shrink-0 z-20 transition-colors">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -400,16 +448,16 @@ export default function GroupChatRoomPage() {
                 }
               }
             }}
-            placeholder="Kirim pesan ke grup..."
-            className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs"
+            placeholder={`Kirim pesan ke ${groupChat.title}...`}
+            className="flex-1 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] px-4 py-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 dark:focus:border-indigo-400 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs"
           />
           <button
             type="button"
             disabled={sending || (!inputText.trim() && messages.length === 0)}
             onClick={() => handleTurn()}
-            className="h-[48px] w-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
-            title={!inputText.trim() ? 'Lanjut bicara karakter berikutnya' : 'Kirim'}
-            aria-label={!inputText.trim() ? 'Lanjut bicara karakter berikutnya' : 'Kirim'}
+            className="h-[48px] w-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 dark:disabled:bg-slate-800 dark:disabled:text-slate-600 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
+            title={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
+            aria-label={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
           >
             <Send className="w-4 h-4" />
           </button>

@@ -248,6 +248,51 @@ async function runPhase2BackgroundTasks(chat: ChatRow, character: CharacterRow, 
       // Abaikan kegagalan ekstraksi latar belakang
     }
   }
+
+  // 3. Judul Chat Otomatis dari 2 sampai 3 pesan pertama jika judul masih default bawaan
+  const isDefaultTitle =
+    !chat.title ||
+    chat.title.startsWith('Percakapan dengan ') ||
+    chat.title.startsWith('Chat dengan ') ||
+    chat.title === 'Percakapan Baru';
+
+  if (isDefaultTitle && allMessages.length >= 2 && allMessages.length <= 4) {
+    try {
+      const earlyTranscript = allMessages
+        .slice(0, 4)
+        .map((m) => `${m.role === 'character' ? character.name : 'Pengguna'}: ${m.content.slice(0, 160)}`)
+        .join('\n');
+
+      const titleRes = await generateLLMResponse(
+        [
+          {
+            role: 'system',
+            content:
+              'Buatlah satu judul topik percakapan yang padat, menarik, dan spesifik (maksimal 3-5 kata, Bahasa Indonesia, tanpa tanda kutip atau titik) berdasarkan awal dialog berikut:',
+          },
+          { role: 'user', content: earlyTranscript },
+        ],
+        {
+          temperature: 0.3,
+          maxTokens: 40,
+          characterId: character.id,
+          chatId: chat.id,
+          actionType: 'title',
+        }
+      );
+
+      let cleanTitle = (titleRes.text || '')
+        .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+        .replace(/^(Judul|Topic|Topik)\s*:\s*/i, '')
+        .trim();
+
+      if (cleanTitle.length > 3 && cleanTitle.length <= 50) {
+        db.prepare('UPDATE chats SET title = ? WHERE id = ?').run(cleanTitle, chat.id);
+      }
+    } catch {
+      // Abaikan kegagalan penamaan otomatis
+    }
+  }
 }
 
 export async function POST(req: NextRequest) {

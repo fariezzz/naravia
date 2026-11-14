@@ -10,7 +10,7 @@ export interface LLMCallOptions {
   maxTokens?: number;
   characterId?: string | null;
   chatId?: string | null;
-  actionType?: 'chat' | 'generate' | 'research' | 'summary' | 'memory' | 'group_chat' | 'preview';
+  actionType?: 'chat' | 'generate' | 'research' | 'summary' | 'memory' | 'group_chat' | 'preview' | 'title';
   jsonMode?: boolean;
 }
 
@@ -33,7 +33,10 @@ export async function generateLLMResponse(
 ): Promise<LLMResponse> {
   const settings = getSettingsMap();
   const rawProvider = (settings.provider || 'auto').toLowerCase();
+  const isResearchAction = options.actionType === 'research';
+
   const baseUrl = (
+    (isResearchAction && settings.research_llm_base_url) ||
     settings.llm_base_url ||
     process.env.LLM_BASE_URL ||
     process.env.OPENAI_BASE_URL ||
@@ -42,6 +45,7 @@ export async function generateLLMResponse(
   ).trim();
 
   const apiKey = (
+    (isResearchAction && settings.research_llm_api_key) ||
     settings.llm_api_key ||
     settings.google_api_key ||
     settings.ollama_api_key ||
@@ -53,6 +57,7 @@ export async function generateLLMResponse(
   ).trim();
 
   const model = (
+    (isResearchAction && settings.research_model) ||
     settings.model ||
     settings.ollama_model ||
     process.env.LLM_MODEL ||
@@ -626,4 +631,246 @@ export function cleanCharacterOutput(raw: string, characterName?: string): strin
   }
 
   return text.trim();
+}
+
+/**
+ * Streaming generator LLM:
+ * Menghasilkan chunk teks secara real-time untuk OpenAI-Compatible, Ollama, dan Google.
+ * Memungkinkan pemanggilan abortSignal untuk membatalkan proses di tengah jalan.
+ */
+export async function* streamLLMResponse(
+  messages: LLMMessage[],
+  options: LLMCallOptions & { signal?: AbortSignal } = {}
+): AsyncGenerator<string, { fullText: string; modelUsed: string }, void> {
+  const settings = getSettingsMap();
+  const rawProvider = (settings.provider || 'auto').toLowerCase();
+  const baseUrl = (
+    settings.llm_base_url ||
+    process.env.LLM_BASE_URL ||
+    process.env.OPENAI_BASE_URL ||
+    settings.ollama_base_url ||
+    'https://generativelanguage.googleapis.com/v1beta'
+  ).trim();
+
+  const apiKey = (
+    settings.llm_api_key ||
+    settings.google_api_key ||
+    settings.ollama_api_key ||
+    process.env.LLM_API_KEY ||
+    process.env.GOOGLE_AI_STUDIO_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    ''
+  ).trim();
+
+  const model = (
+    settings.model ||
+    settings.ollama_model ||
+    process.env.LLM_MODEL ||
+    'gemma-4-26b-a4b-it'
+  ).trim();
+
+  const temperature = options.temperature ?? (parseFloat(settings.temperature || '0.9') || 0.9);
+  const maxTokens = options.maxTokens ?? (parseInt(settings.max_tokens || '1024', 10) || 1024);
+  const detectedProtocol = resolveProtocol(rawProvider, baseUrl);
+
+  let accumulated = '';
+  let modelUsed = model;
+
+  if (detectedProtocol === 'google') {
+    // Google generateContent Stream SSE
+    const cleanBase = baseUrl.replace(/\/+$/, '');
+    const baseWithVer = cleanBase.includes('/v1') ? cleanBase : `${cleanBase}/v1beta`;
+    const url = `${baseWithVer}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+
+    const sysParts = messages.filter((m) => m.role === 'system').map((m) => m.content.trim()).filter(Boolean);
+    const convMsgs = messages.filter((m) => m.role !== 'system');
+    const contents = convMsgs.map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: options.signal,
+      body: JSON.stringify({
+        contents: contents.length > 0 ? contents : [{ role: 'user', parts: [{ text: 'Mulai.' }] }],
+        ...(sysParts.length > 0 ? { systemInstruction: { parts: [{ text: sysParts.join('\n\n') }] } } : {}),
+        generationConfig: {
+          temperature,
+          maxOutputTokens: maxTokens,
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Google API Stream Error (${res.status}): ${errText.slice(0, 200)}`);
+    }
+
+    if (!res.body) throw new Error('Response body stream tidak tersedia.');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const jsonStr = trimmed.slice(6).trim();
+            if (jsonStr && jsonStr !== '[DONE]') {
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const chunkText = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (chunkText) {
+                  accumulated += chunkText;
+                  yield chunkText;
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  } else if (detectedProtocol === 'ollama_native') {
+    // Ollama native streaming endpoint (/api/chat)
+    const cleanUrl = baseUrl.replace(/\/+$/, '');
+    const res = await fetch(`${cleanUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: options.signal,
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        options: { temperature, num_predict: maxTokens },
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Ollama Stream Error (${res.status}): ${errText.slice(0, 200)}`);
+    }
+
+    if (!res.body) throw new Error('Response body stream tidak tersedia.');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              const chunk = parsed.message?.content || '';
+              if (chunk) {
+                accumulated += chunk;
+                yield chunk;
+              }
+            } catch {}
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  } else {
+    // OpenAI-Compatible streaming endpoint (/chat/completions)
+    let endpoint = baseUrl.replace(/\/+$/, '');
+    if (!endpoint.endsWith('/chat/completions')) {
+      if (endpoint.endsWith('/v1') || endpoint.endsWith('/openai')) {
+        endpoint = `${endpoint}/chat/completions`;
+      } else {
+        endpoint = `${endpoint}/v1/chat/completions`;
+      }
+    }
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+    const isGlm = model.toLowerCase().includes('glm');
+    const effectiveTemp = isGlm ? Math.min(temperature, 0.7) : temperature;
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      signal: options.signal,
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: effectiveTemp,
+        max_tokens: maxTokens,
+        stream: true,
+        top_p: isGlm ? 0.8 : 0.9,
+        ...(isGlm ? { presence_penalty: 0.1, frequency_penalty: 0.1 } : {}),
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`OpenAI Stream Error (${res.status}): ${errText.slice(0, 200)}`);
+    }
+
+    if (!res.body) throw new Error('Response body stream tidak tersedia.');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const dataStr = trimmed.slice(6).trim();
+            if (dataStr === '[DONE]') break;
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.model) modelUsed = parsed.model;
+              const delta = parsed.choices?.[0]?.delta?.content || '';
+              if (delta) {
+                accumulated += delta;
+                yield delta;
+              }
+            } catch {}
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  recordTokenUsage({
+    characterId: options.characterId || null,
+    chatId: options.chatId || null,
+    actionType: options.actionType || 'chat',
+    tokensIn: estimateTokens(messages.map((m) => m.content).join('\n')),
+    tokensOut: estimateTokens(accumulated),
+  });
+
+  return { fullText: accumulated, modelUsed };
 }

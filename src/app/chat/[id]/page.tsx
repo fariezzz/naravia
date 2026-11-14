@@ -18,6 +18,8 @@ import {
   AlertCircle,
   Check,
   X,
+  Copy,
+  Square,
 } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -112,9 +114,37 @@ export default function ChatRoomPage() {
 
   const [deleteChatModal, setDeleteChatModal] = useState(false);
   const [deleteMsgTarget, setDeleteMsgTarget] = useState<string | null>(null);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [streamingCharText, setStreamingCharText] = useState<string>('');
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleCopyMessage = async (msgId: string, text: string) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedMsgId(msgId);
+      setTimeout(() => {
+        setCopiedMsgId((prev) => (prev === msgId ? null : prev));
+      }, 2000);
+    } catch {
+      setError('Gagal menyalin teks pesan.');
+    }
+  };
 
   const loadRoom = async (isBackground = false) => {
     if (!isBackground) {
@@ -200,6 +230,13 @@ export default function ChatRoomPage() {
     }
   }, [inputText]);
 
+  const handleStopStreaming = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  };
+
   const handleSendMessage = async () => {
     const content = inputText.trim();
     if (sending) return;
@@ -227,14 +264,20 @@ export default function ChatRoomPage() {
     setSending(true);
     setError('');
     setInputText('');
+    setStreamingCharText('');
+    setStreamingMsgId(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = '';
     }
 
+    const abortCtrl = new AbortController();
+    abortControllerRef.current = abortCtrl;
+
     try {
-      const res = await fetch('/api/messages', {
+      const res = await fetch('/api/messages/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortCtrl.signal,
         body: JSON.stringify({
           action: 'send',
           chatId,
@@ -242,46 +285,115 @@ export default function ChatRoomPage() {
           isContinue,
         }),
       });
-      const data = await res.json();
+
       if (!res.ok) {
         if (tempUserMsgId) {
           setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
           setInputText(content);
         }
-        throw new Error(data.error || 'Gagal mengirim pesan.');
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Gagal memulai streaming balasan.');
       }
 
-      const newItems: MessageItem[] = [];
-      if (data.userMessage) newItems.push(data.userMessage);
-      if (data.characterMessage) newItems.push(data.characterMessage);
-
-      let updatedMessages: MessageItem[] = [];
-      setMessages((prev) => {
-        const filtered = tempUserMsgId ? prev.filter((m) => m.id !== tempUserMsgId) : prev;
-        updatedMessages = [...filtered, ...newItems];
-        return updatedMessages;
-      });
-
-      if (Array.isArray(data.matchedLore)) setMatchedLore(data.matchedLore);
-      if (data.chat) setChat(data.chat);
-      if (Array.isArray(data.memories)) setMemories(data.memories);
-
-      setClientCache(`chat_room_${chatId}`, {
-        chat: data.chat || chat,
-        character,
-        messages: updatedMessages.length > 0 ? updatedMessages : messages,
-        memories: Array.isArray(data.memories) ? data.memories : memories,
-        otherChats,
-        personas,
-        userPersona,
-      });
-    } catch (err) {
-      if (tempUserMsgId) {
-        setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
+      if (!res.body) {
+        throw new Error('Streaming body tidak diterima dari server.');
       }
-      setError(err instanceof Error ? err.message : 'Gagal mengirim pesan.');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let activeCharMsgId = '';
+      let accumulatedLiveText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const jsonStr = trimmed.slice(6).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const event = JSON.parse(jsonStr);
+
+              if (event.type === 'start') {
+                activeCharMsgId = event.characterMessageId;
+                setStreamingMsgId(activeCharMsgId);
+
+                setMessages((prev) => {
+                  let list = tempUserMsgId && event.userMessage
+                    ? prev.map((m) => (m.id === tempUserMsgId ? event.userMessage : m))
+                    : prev;
+                  if (!list.some((m) => m.id === activeCharMsgId)) {
+                    list = [
+                      ...list,
+                      {
+                        id: activeCharMsgId,
+                        chat_id: chatId,
+                        role: 'character',
+                        content: '',
+                        alternatives: [''],
+                        active_alt_index: 0,
+                        is_pinned_memory: false,
+                        created_at: new Date().toISOString(),
+                      },
+                    ];
+                  }
+                  return list;
+                });
+              } else if (event.type === 'chunk') {
+                accumulatedLiveText += event.text;
+                setStreamingCharText(accumulatedLiveText);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === activeCharMsgId
+                      ? { ...m, content: accumulatedLiveText }
+                      : m
+                  )
+                );
+              } else if (event.type === 'done' || event.type === 'stopped') {
+                const finalMsg: MessageItem = event.message;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === activeCharMsgId ? finalMsg : m))
+                );
+
+                if (event.title) {
+                  setChat((prev: any) => (prev ? { ...prev, title: event.title } : prev));
+                  setChatTitleInput(event.title);
+                }
+
+                setClientCache(`chat_room_${chatId}`, null);
+              } else if (event.type === 'error') {
+                setError(event.error);
+                if (tempUserMsgId && !accumulatedLiveText) {
+                  setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId && m.id !== activeCharMsgId));
+                  setInputText(content);
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        // Balasan sengaja dihentikan oleh pengguna
+      } else {
+        if (tempUserMsgId) {
+          setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
+        }
+        setError(err instanceof Error ? err.message : 'Gagal mengirim pesan.');
+      }
     } finally {
+      abortControllerRef.current = null;
       setSending(false);
+      setStreamingCharText('');
+      setStreamingMsgId(null);
     }
   };
 
@@ -550,11 +662,11 @@ export default function ChatRoomPage() {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden max-w-5xl w-full mx-auto px-0 sm:px-4 py-0 sm:py-3 min-h-0">
       {/* Bar Header Ruang Chat (Sticky & Fixed di Atas) */}
-      <div className="bg-white border-b sm:border border-slate-200 px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2 sm:gap-3 sm:rounded-2xl shadow-2xs shrink-0 z-20">
+      <div className="bg-white dark:bg-[#0c1220] border-b sm:border border-slate-200 dark:border-slate-800 px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2 sm:gap-3 sm:rounded-2xl shadow-2xs shrink-0 z-20 transition-colors">
         <div className="flex items-center gap-3 min-w-0">
           <Link
             href={`/characters/${character.id}`}
-            className="w-8 h-8 rounded-lg border border-slate-200 inline-flex items-center justify-center text-slate-600 hover:bg-slate-50 shrink-0"
+            className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-800 inline-flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
             title="Profil Karakter"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -563,15 +675,15 @@ export default function ChatRoomPage() {
             <CharacterAvatar name={character.name} avatar={character.avatar} size="sm" />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="text-sm font-bold text-slate-900 truncate">{character.name}</h1>
+                <h1 className="text-sm font-bold text-slate-900 dark:text-white truncate">{character.name}</h1>
                 {character.world_name && (
-                  <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-50 text-teal-700 text-[10px] font-medium">
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 text-[10px] font-medium">
                     <Globe className="w-2.5 h-2.5" />
                     <span>{character.world_name}</span>
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-500 truncate">{chat.title}</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{chat.title}</p>
             </div>
           </Link>
         </div>
@@ -665,7 +777,7 @@ export default function ChatRoomPage() {
       {/* Area Utama: Alur Bubble Chat + Drawer Pengaturan Samping */}
       <div className="flex-1 flex gap-4 mt-0 sm:mt-3 min-h-0">
         {/* Daftar Pesan */}
-        <div className="flex-1 bg-white border-0 sm:border border-slate-200 flex flex-col overflow-hidden sm:rounded-2xl shadow-none sm:shadow-2xs">
+        <div className="flex-1 bg-white dark:bg-[#0c1220] border-0 sm:border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden sm:rounded-2xl shadow-none sm:shadow-2xs transition-colors">
           <div className="flex-1 overflow-y-auto px-3.5 py-4 sm:p-6 space-y-4 sm:space-y-5">
             {messages.map((msg) => {
               const isChar = msg.role === 'character';
@@ -689,12 +801,12 @@ export default function ChatRoomPage() {
                     }`}
                   >
                     <div className="flex items-center gap-2 px-1">
-                      <span className="text-xs font-semibold text-slate-700">
+                      <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                         {isChar ? character.name : userPersona.display_name || 'Kamu'}
                       </span>
                       {msg.is_pinned_memory && (
-                        <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-medium inline-flex items-center gap-0.5">
-                          <Bookmark className="w-2.5 h-2.5 fill-indigo-600" />
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-medium inline-flex items-center gap-0.5">
+                          <Bookmark className="w-2.5 h-2.5 fill-indigo-600 dark:fill-indigo-400" />
                           <span>Diingat</span>
                         </span>
                       )}
@@ -731,12 +843,12 @@ export default function ChatRoomPage() {
                       <div
                         className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line break-words [overflow-wrap:anywhere] ${
                           isChar
-                            ? 'bg-slate-100 text-slate-900 rounded-tl-xs'
-                            : 'bg-slate-900 text-white rounded-tr-xs'
+                            ? 'bg-slate-100 dark:bg-[#151c2e] text-slate-900 dark:text-slate-100 rounded-tl-xs'
+                            : 'bg-slate-900 dark:bg-indigo-600 text-white rounded-tr-xs'
                         }`}
                       >
                         {isRegeneratingThis ? (
-                          <span className="text-slate-500 italic">
+                          <span className="text-slate-500 dark:text-slate-400 italic">
                             Menyusun alternatif jawaban baru...
                           </span>
                         ) : (
@@ -746,14 +858,14 @@ export default function ChatRoomPage() {
                     )}
 
                     {/* Bar Aksi per Pesan & Navigasi Swipe */}
-                    <div className="flex flex-wrap items-center gap-1.5 px-1 text-slate-400">
+                    <div className="flex flex-wrap items-center gap-1.5 px-1 text-slate-400 dark:text-slate-500">
                       {isChar && (
-                        <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg px-1.5 py-0.5 text-[11px] text-slate-600 mr-1">
+                        <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg px-1.5 py-0.5 text-[11px] text-slate-600 dark:text-slate-300 mr-1">
                           <button
                             type="button"
                             disabled={currentAltIdx <= 0 || isRegeneratingThis}
                             onClick={() => handleSwipeSelect(msg, currentAltIdx - 1)}
-                            className="p-0.5 hover:text-slate-900 disabled:opacity-30"
+                            className="p-0.5 hover:text-slate-900 dark:hover:text-white disabled:opacity-30"
                             title="Alternatif Sebelumnya"
                           >
                             <ChevronLeft className="w-3.5 h-3.5" />
@@ -771,7 +883,7 @@ export default function ChatRoomPage() {
                                 handleGenerateSwipeOrRegenerate(msg);
                               }
                             }}
-                            className="p-0.5 hover:text-indigo-600 disabled:opacity-30"
+                            className="p-0.5 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-30"
                             title={
                               currentAltIdx < altCount - 1
                                 ? 'Alternatif Berikutnya'
@@ -788,7 +900,7 @@ export default function ChatRoomPage() {
                           type="button"
                           disabled={isRegeneratingThis}
                           onClick={() => handleGenerateSwipeOrRegenerate(msg)}
-                          className="p-1 rounded hover:bg-slate-100 hover:text-slate-700 inline-flex items-center gap-1 text-[11px]"
+                          className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 inline-flex items-center gap-1 text-[11px]"
                           title="Minta Jawaban Ulang (Regenerate)"
                         >
                           <RotateCcw className="w-3 h-3" />
@@ -798,11 +910,32 @@ export default function ChatRoomPage() {
 
                       <button
                         type="button"
+                        onClick={() => handleCopyMessage(msg.id, msg.content)}
+                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 text-[11px] transition-colors ${
+                          copiedMsgId === msg.id ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'hover:text-slate-700 dark:hover:text-slate-200'
+                        }`}
+                        title="Salin Isi Pesan"
+                      >
+                        {copiedMsgId === msg.id ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            <span>Tersalin</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Salin</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => {
                           setEditingMsgId(msg.id);
                           setEditingContent(msg.content);
                         }}
-                        className="p-1 rounded hover:bg-slate-100 hover:text-slate-700 inline-flex items-center gap-1 text-[11px]"
+                        className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 inline-flex items-center gap-1 text-[11px]"
                         title="Edit Pesan"
                       >
                         <Edit3 className="w-3 h-3" />
@@ -812,8 +945,8 @@ export default function ChatRoomPage() {
                       <button
                         type="button"
                         onClick={() => handlePinMessageToMemory(msg)}
-                        className={`p-1 rounded hover:bg-slate-100 inline-flex items-center gap-1 text-[11px] ${
-                          msg.is_pinned_memory ? 'text-indigo-600 font-medium' : 'hover:text-slate-700'
+                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 text-[11px] ${
+                          msg.is_pinned_memory ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'hover:text-slate-700 dark:hover:text-slate-200'
                         }`}
                         title="Tandai sebagai Memori Jangka Panjang ('Ingat Ini')"
                       >
@@ -824,7 +957,7 @@ export default function ChatRoomPage() {
                       <button
                         type="button"
                         onClick={() => setDeleteMsgTarget(msg.id)}
-                        className="p-1 rounded hover:bg-rose-50 hover:text-rose-600 inline-flex items-center gap-1 text-[11px]"
+                        className="p-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 inline-flex items-center gap-1 text-[11px]"
                         title="Hapus Pesan"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -856,7 +989,7 @@ export default function ChatRoomPage() {
           </div>
 
           {/* Input Kirim Pesan (Sticky & Fixed di Bagian Bawah) */}
-          <div className="p-2.5 sm:p-3.5 border-t border-slate-200 bg-slate-50/70 backdrop-blur-xs pb-[max(0.625rem,env(safe-area-inset-bottom))] shrink-0 z-20">
+          <div className="p-2.5 sm:p-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#0c1220]/90 backdrop-blur-xs pb-[max(0.625rem,env(safe-area-inset-bottom))] shrink-0 z-20 transition-colors">
             <div className="flex items-center gap-2.5">
               <textarea
                 ref={textareaRef}
@@ -883,18 +1016,30 @@ export default function ChatRoomPage() {
                   }
                 }}
                 placeholder={`Kirim pesan ke ${character.name}...`}
-                className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs"
+                className="flex-1 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] px-4 py-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 dark:focus:border-indigo-400 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs"
               />
-              <button
-                type="button"
-                disabled={sending || (!inputText.trim() && messages.length === 0)}
-                onClick={handleSendMessage}
-                className="h-[48px] w-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
-                title={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
-                aria-label={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
-              >
-                <Send className="w-4 h-4" />
-              </button>
+              {sending ? (
+                <button
+                  type="button"
+                  onClick={handleStopStreaming}
+                  className="h-[48px] w-[48px] rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
+                  title="Berhenti Berbicara"
+                  aria-label="Berhenti Berbicara"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!inputText.trim() && messages.length === 0}
+                  onClick={handleSendMessage}
+                  className="h-[48px] w-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 dark:disabled:bg-slate-800 dark:disabled:text-slate-600 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
+                  title={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
+                  aria-label={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -906,41 +1051,41 @@ export default function ChatRoomPage() {
               className="fixed inset-0 bg-slate-900/40 z-30 sm:hidden backdrop-blur-2xs"
               onClick={() => setShowDrawer(false)}
             />
-            <aside className="fixed inset-y-0 right-0 z-40 w-80 max-w-[85vw] sm:static sm:z-auto sm:w-80 bg-white sm:rounded-2xl border-l sm:border border-slate-200 p-4 space-y-5 overflow-y-auto shrink-0 shadow-xl sm:shadow-2xs">
-              <div className="flex items-center justify-between sm:hidden pb-2 border-b border-slate-100">
-                <span className="text-xs font-bold text-slate-900">Pengaturan Chat</span>
+            <aside className="fixed inset-y-0 right-0 z-40 w-80 max-w-[85vw] sm:static sm:z-auto sm:w-80 bg-white dark:bg-[#0c1220] sm:rounded-2xl border-l sm:border border-slate-200 dark:border-slate-800 p-4 space-y-5 overflow-y-auto shrink-0 shadow-xl sm:shadow-2xs transition-colors">
+              <div className="flex items-center justify-between sm:hidden pb-2 border-b border-slate-100 dark:border-slate-800">
+                <span className="text-xs font-bold text-slate-900 dark:text-white">Pengaturan Chat</span>
                 <button
                   type="button"
                   onClick={() => setShowDrawer(false)}
-                  className="p-1 rounded-lg text-slate-500 hover:bg-slate-100"
+                  className="p-1 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
               <form onSubmit={handleSaveChatSettings} className="space-y-3.5">
-              <h3 className="text-sm font-semibold text-slate-900">Pengaturan Percakapan Ini</h3>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Pengaturan Percakapan Ini</h3>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Judul Ruang Chat
                 </label>
                 <input
                   type="text"
                   value={chatTitleInput}
                   onChange={(e) => setChatTitleInput(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-900"
+                  className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
                 />
               </div>
 
               {personas.length > 0 && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Persona Kamu di Chat Ini
                   </label>
                   <select
                     value={userPersona.id || ''}
                     onChange={(e) => handleSwitchChatPersona(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white"
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-[#111827]"
                   >
                     {personas.map((p) => (
                       <option key={p.id} value={p.id}>
@@ -952,13 +1097,13 @@ export default function ChatRoomPage() {
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Gaya Panjang Balasan
                 </label>
                 <select
                   value={replyStyleInput}
                   onChange={(e) => setReplyStyleInput(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white"
+                  className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-[#111827]"
                 >
                   <option value="pendek">Pendek (1-2 paragraf ringkas)</option>
                   <option value="sedang">Sedang (Seimbang & natural)</option>
@@ -968,7 +1113,7 @@ export default function ChatRoomPage() {
 
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Temperature ({tempInput})
                   </label>
                   <input
@@ -978,11 +1123,11 @@ export default function ChatRoomPage() {
                     max="1.5"
                     value={tempInput}
                     onChange={(e) => setTempInput(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-900"
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Max Tokens
                   </label>
                   <input
@@ -992,21 +1137,21 @@ export default function ChatRoomPage() {
                     max="4096"
                     value={maxTokensInput}
                     onChange={(e) => setMaxTokensInput(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-900"
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
                   />
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-slate-700">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                     Ringkasan Konteks Cerita
                   </label>
                   <button
                     type="button"
                     disabled={summarizing}
                     onClick={handleSummarizeNow}
-                    className="text-[11px] font-medium text-indigo-600 hover:underline"
+                    className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
                   >
                     {summarizing ? 'Meringkas...' : 'Buat Ringkasan AI'}
                   </button>
@@ -1016,14 +1161,14 @@ export default function ChatRoomPage() {
                   value={chat.summary || ''}
                   onChange={(e) => setChat((p: any) => ({ ...p, summary: e.target.value }))}
                   placeholder="Ringkasan percakapan sejauh ini (otomatis dibuat saat chat panjang atau klik Buat Ringkasan AI)..."
-                  className="w-full rounded-lg border border-slate-200 p-2 text-xs text-slate-800"
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-2 text-xs text-slate-800 dark:text-slate-200"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={savingSettings}
-                className="w-full h-8 rounded-lg bg-slate-900 hover:bg-indigo-600 text-white text-xs font-semibold transition-colors"
+                className="w-full h-8 rounded-lg bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-xs font-semibold transition-colors"
               >
                 {savingSettings ? 'Menyimpan...' : 'Simpan Pengaturan Chat'}
               </button>
@@ -1031,8 +1176,8 @@ export default function ChatRoomPage() {
 
             {/* Daftar Ruang Chat Lain untuk Karakter yang Sama */}
             {otherChats.length > 1 && (
-              <div className="pt-3 border-t border-slate-100 space-y-2">
-                <h4 className="text-xs font-semibold text-slate-800">
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                   Alur Cerita Lain ({otherChats.length})
                 </h4>
                 <div className="space-y-1.5">
@@ -1042,8 +1187,8 @@ export default function ChatRoomPage() {
                       href={`/chat/${oc.id}`}
                       className={`block px-2.5 py-2 rounded-lg text-xs truncate ${
                         oc.id === chatId
-                          ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                          : 'text-slate-600 hover:bg-slate-50'
+                          ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-semibold'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
                       {oc.title}
@@ -1053,11 +1198,11 @@ export default function ChatRoomPage() {
               </div>
             )}
 
-            <div className="pt-3 border-t border-slate-100">
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setDeleteChatModal(true)}
-                className="w-full h-8 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-medium inline-flex items-center justify-center gap-1.5"
+                className="w-full h-8 rounded-lg border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-medium inline-flex items-center justify-center gap-1.5"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Hapus Ruang Chat Ini</span>
