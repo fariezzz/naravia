@@ -295,90 +295,9 @@ export default function ChatRoomPage() {
         throw new Error(data.error || 'Gagal memulai streaming balasan.');
       }
 
-      if (!res.body) {
-        throw new Error('Streaming body tidak diterima dari server.');
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let activeCharMsgId = '';
-      let accumulatedLiveText = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith('data: ')) {
-            const jsonStr = trimmed.slice(6).trim();
-            if (!jsonStr) continue;
-
-            try {
-              const event = JSON.parse(jsonStr);
-
-              if (event.type === 'start') {
-                activeCharMsgId = event.characterMessageId;
-                setStreamingMsgId(activeCharMsgId);
-
-                setMessages((prev) => {
-                  let list = tempUserMsgId && event.userMessage
-                    ? prev.map((m) => (m.id === tempUserMsgId ? event.userMessage : m))
-                    : prev;
-                  if (!list.some((m) => m.id === activeCharMsgId)) {
-                    list = [
-                      ...list,
-                      {
-                        id: activeCharMsgId,
-                        chat_id: chatId,
-                        role: 'character',
-                        content: '',
-                        alternatives: [''],
-                        active_alt_index: 0,
-                        is_pinned_memory: false,
-                        created_at: new Date().toISOString(),
-                      },
-                    ];
-                  }
-                  return list;
-                });
-              } else if (event.type === 'chunk') {
-                accumulatedLiveText += event.text;
-                setStreamingCharText(accumulatedLiveText);
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === activeCharMsgId
-                      ? { ...m, content: accumulatedLiveText }
-                      : m
-                  )
-                );
-              } else if (event.type === 'done' || event.type === 'stopped') {
-                const finalMsg: MessageItem = event.message;
-                setMessages((prev) =>
-                  prev.map((m) => (m.id === activeCharMsgId ? finalMsg : m))
-                );
-
-                if (event.title) {
-                  setChat((prev: any) => (prev ? { ...prev, title: event.title } : prev));
-                  setChatTitleInput(event.title);
-                }
-
-                setClientCache(`chat_room_${chatId}`, null);
-              } else if (event.type === 'error') {
-                setError(event.error);
-                if (tempUserMsgId && !accumulatedLiveText) {
-                  setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId && m.id !== activeCharMsgId));
-                  setInputText(content);
-                }
-              }
-            } catch {}
-          }
-        }
+      const { accumulatedLiveText, hadError } = await consumeMessageStream(res, { tempUserMsgId });
+      if (hadError && !accumulatedLiveText) {
+        setInputText(content);
       }
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -418,28 +337,135 @@ export default function ChatRoomPage() {
     }
   };
 
+  // Memproses respons streaming SSE umum dari /api/messages/stream
+  // Dipakai bersama oleh pengiriman pesan baru dan regenerate/swipe alternatif baru
+  const consumeMessageStream = async (
+    res: Response,
+    opts: { targetMsgId?: string | null; tempUserMsgId?: string | null } = {}
+  ) => {
+    if (!res.body) {
+      throw new Error('Streaming body tidak diterima dari server.');
+    }
+
+    const { targetMsgId, tempUserMsgId } = opts;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let activeCharMsgId = targetMsgId || '';
+    let accumulatedLiveText = '';
+    let hadError = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data: ')) {
+          const jsonStr = trimmed.slice(6).trim();
+          if (!jsonStr) continue;
+
+          try {
+            const event = JSON.parse(jsonStr);
+
+            if (event.type === 'start') {
+              if (!activeCharMsgId) activeCharMsgId = event.characterMessageId;
+              setStreamingMsgId(activeCharMsgId);
+
+              setMessages((prev) => {
+                let list = tempUserMsgId && event.userMessage
+                  ? prev.map((m) => (m.id === tempUserMsgId ? event.userMessage : m))
+                  : prev;
+                if (!event.isRegenerate && !list.some((m) => m.id === activeCharMsgId)) {
+                  list = [
+                    ...list,
+                    {
+                      id: activeCharMsgId,
+                      chat_id: chatId,
+                      role: 'character',
+                      content: '',
+                      alternatives: [''],
+                      active_alt_index: 0,
+                      is_pinned_memory: false,
+                      created_at: new Date().toISOString(),
+                    },
+                  ];
+                }
+                return list;
+              });
+            } else if (event.type === 'chunk') {
+              accumulatedLiveText += event.text;
+              setStreamingCharText(accumulatedLiveText);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === activeCharMsgId ? { ...m, content: accumulatedLiveText } : m
+                )
+              );
+            } else if (event.type === 'done' || event.type === 'stopped') {
+              const finalMsg: MessageItem = event.message;
+              setMessages((prev) => prev.map((m) => (m.id === activeCharMsgId ? finalMsg : m)));
+
+              if (event.title) {
+                setChat((prev: any) => (prev ? { ...prev, title: event.title } : prev));
+                setChatTitleInput(event.title);
+              }
+
+              setClientCache(`chat_room_${chatId}`, null);
+            } else if (event.type === 'error') {
+              setError(event.error);
+              hadError = true;
+              if (tempUserMsgId && !accumulatedLiveText) {
+                setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId && m.id !== activeCharMsgId));
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+
+    return { activeCharMsgId, accumulatedLiveText, hadError };
+  };
+
   const handleGenerateSwipeOrRegenerate = async (msg: MessageItem) => {
     if (regeneratingId || sending) return;
     setRegeneratingId(msg.id);
     setError('');
+    setStreamingCharText('');
+    setStreamingMsgId(null);
+
+    const abortCtrl = new AbortController();
+    abortControllerRef.current = abortCtrl;
+
     try {
-      const res = await fetch('/api/messages', {
+      const res = await fetch('/api/messages/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortCtrl.signal,
         body: JSON.stringify({
           action: 'swipe_generate',
           messageId: msg.id,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gagal membuat alternatif balasan baru.');
 
-      setMessages((prev) => prev.map((m) => (m.id === msg.id ? data.message : m)));
-      if (Array.isArray(data.matchedLore)) setMatchedLore(data.matchedLore);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal membuat alternatif balasan.');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Gagal membuat alternatif balasan baru.');
+      }
+
+      await consumeMessageStream(res, { targetMsgId: msg.id });
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        setError(err instanceof Error ? err.message : 'Gagal membuat alternatif balasan.');
+      }
     } finally {
+      abortControllerRef.current = null;
       setRegeneratingId(null);
+      setStreamingCharText('');
+      setStreamingMsgId(null);
     }
   };
 
@@ -847,7 +873,7 @@ export default function ChatRoomPage() {
                             : 'bg-slate-900 dark:bg-indigo-600 text-white rounded-tr-xs'
                         }`}
                       >
-                        {isRegeneratingThis ? (
+                        {isRegeneratingThis && !msg.content ? (
                           <span className="text-slate-500 dark:text-slate-400 italic">
                             Menyusun alternatif jawaban baru...
                           </span>
@@ -976,10 +1002,10 @@ export default function ChatRoomPage() {
               );
             })}
 
-            {sending && (
+            {sending && !streamingMsgId && (
               <div className="flex items-start gap-3">
                 <CharacterAvatar name={character.name} avatar={character.avatar} size="sm" />
-                <div className="bg-slate-100 rounded-2xl rounded-tl-xs px-4 py-3 text-xs text-slate-500 italic">
+                <div className="bg-slate-100 dark:bg-[#151c2e] rounded-2xl rounded-tl-xs px-4 py-3 text-xs text-slate-500 dark:text-slate-400 italic">
                   {character.name} sedang mengetik balasan...
                 </div>
               </div>
