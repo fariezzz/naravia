@@ -313,6 +313,8 @@ export default function ChatRoomPage() {
       setSending(false);
       setStreamingCharText('');
       setStreamingMsgId(null);
+      // Buang bubble karakter yang tetap kosong (misal dihentikan sebelum karakter pertama masuk)
+      setMessages((prev) => prev.filter((m) => !(m.role === 'character' && !m.content.trim())));
     }
   };
 
@@ -418,8 +420,11 @@ export default function ChatRoomPage() {
             } else if (event.type === 'error') {
               setError(event.error);
               hadError = true;
-              if (tempUserMsgId && !accumulatedLiveText) {
-                setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId && m.id !== activeCharMsgId));
+              // Buang bubble karakter yang masih kosong (bukan alur regenerate) beserta pesan optimistik pengguna
+              if (!accumulatedLiveText && !targetMsgId) {
+                setMessages((prev) =>
+                  prev.filter((m) => m.id !== activeCharMsgId && (!tempUserMsgId || m.id !== tempUserMsgId))
+                );
               }
             }
           } catch {}
@@ -436,6 +441,24 @@ export default function ChatRoomPage() {
     setError('');
     setStreamingCharText('');
     setStreamingMsgId(null);
+
+    // Geser bubble ke slot alternatif baru seketika (optimistik), tanpa menunggu stream selesai
+    const previousMsg = msg;
+    const baseAlternatives = msg.alternatives && msg.alternatives.length > 0 ? msg.alternatives : [msg.content];
+    const newAltIndex = baseAlternatives.length;
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msg.id
+          ? { ...m, content: '', alternatives: [...baseAlternatives, ''], active_alt_index: newAltIndex }
+          : m
+      )
+    );
+    // Kembalikan ke alternatif sebelumnya hanya jika slot baru masih kosong (belum ada teks yang masuk)
+    const revertIfEmpty = () => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === previousMsg.id && !m.content.trim() ? previousMsg : m))
+      );
+    };
 
     const abortCtrl = new AbortController();
     abortControllerRef.current = abortCtrl;
@@ -456,9 +479,22 @@ export default function ChatRoomPage() {
         throw new Error(data.error || 'Gagal membuat alternatif balasan baru.');
       }
 
-      await consumeMessageStream(res, { targetMsgId: msg.id });
+      const { hadError } = await consumeMessageStream(res, { targetMsgId: msg.id });
+      if (hadError) revertIfEmpty();
     } catch (err: any) {
-      if (err.name !== 'AbortError') {
+      if (err.name === 'AbortError') {
+        // Dihentikan pengguna: simpan teks parsial ke slot alternatif baru, atau kembalikan jika masih kosong
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== previousMsg.id) return m;
+            if (!m.content.trim()) return previousMsg;
+            const alts = [...m.alternatives];
+            alts[newAltIndex] = m.content;
+            return { ...m, alternatives: alts };
+          })
+        );
+      } else {
+        revertIfEmpty();
         setError(err instanceof Error ? err.message : 'Gagal membuat alternatif balasan.');
       }
     } finally {
@@ -873,9 +909,10 @@ export default function ChatRoomPage() {
                             : 'bg-slate-900 dark:bg-indigo-600 text-white rounded-tr-xs'
                         }`}
                       >
-                        {isRegeneratingThis && !msg.content ? (
-                          <span className="text-slate-500 dark:text-slate-400 italic">
-                            Menyusun alternatif jawaban baru...
+                        {isChar && !msg.content.trim() && (isRegeneratingThis || streamingMsgId === msg.id) ? (
+                          // Indikator mengetik ditampilkan di dalam bubble yang sama, hilang saat karakter pertama masuk
+                          <span className="text-xs text-slate-500 dark:text-slate-400 italic">
+                            {character.name} sedang mengetik balasan...
                           </span>
                         ) : (
                           <FormattedMessage content={msg.content} isUser={!isChar} />
@@ -883,8 +920,12 @@ export default function ChatRoomPage() {
                       </div>
                     )}
 
-                    {/* Bar Aksi per Pesan & Navigasi Swipe */}
-                    <div className="flex flex-wrap items-center gap-1.5 px-1 text-slate-400 dark:text-slate-500">
+                    {/* Bar Aksi per Pesan & Navigasi Swipe (disembunyikan selama balasan baru masih di-stream) */}
+                    <div
+                      className={`flex-wrap items-center gap-1.5 px-1 text-slate-400 dark:text-slate-500 ${
+                        streamingMsgId === msg.id && !isRegeneratingThis ? 'hidden' : 'flex'
+                      }`}
+                    >
                       {isChar && (
                         <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg px-1.5 py-0.5 text-[11px] text-slate-600 dark:text-slate-300 mr-1">
                           <button
