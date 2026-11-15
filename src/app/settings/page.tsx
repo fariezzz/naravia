@@ -15,6 +15,7 @@ import {
   Image as ImageIcon,
   Plus,
   Star,
+  Search,
 } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import CharacterAvatar from '@/components/CharacterAvatar';
@@ -121,6 +122,7 @@ export default function SettingsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [testingConn, setTestingConn] = useState(false);
+  const [testingSearch, setTestingSearch] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -473,6 +475,44 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : 'Gagal menguji koneksi LLM.');
     } finally {
       setTestingConn(false);
+    }
+  };
+
+  const handleTestSearch = async () => {
+    setTestingSearch(true);
+    setError('');
+    setNotice('');
+    try {
+      // Simpan dulu pengaturan penyedia pencarian & kuncinya agar sinkron dengan server
+      const payload = { ...settings };
+      delete payload.google_api_key;
+      delete payload.ollama_api_key;
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'test_search', query: 'Hatsune Miku karakter vocaloid' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal menguji pencarian web.');
+
+      if (data.info) {
+        setNotice(data.info);
+      } else {
+        const sourcesPreview = (data.sources || []).slice(0, 3).join(' | ');
+        setNotice(
+          `Pencarian via ${data.provider} berhasil. Ditemukan ${data.sources?.length || 0} sumber. Contoh: ${sourcesPreview || '-'}`
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal menguji pencarian web.');
+    } finally {
+      setTestingSearch(false);
     }
   };
 
@@ -1036,6 +1076,58 @@ export default function SettingsPage() {
                       onChange={(e) => setSettings((s) => ({ ...s, research_llm_api_key: e.target.value }))}
                       placeholder={settings.has_research_api_key === 'true' ? '••••••••' : 'Sama dengan API Key utama'}
                       className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Penyedia Pencarian Web untuk Riset Karakter */}
+              <div className="pt-4 border-t border-slate-100/80 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900">Penyedia Pencarian Web (Riset)</h4>
+                    <p className="text-[11px] text-slate-500">
+                      Opsional. Jika "Pengetahuan Model" dipilih, riset murni mengandalkan ingatan model tanpa browsing web.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={testingSearch}
+                    onClick={handleTestSearch}
+                    className="h-9 px-3.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
+                  >
+                    <Search className="w-3.5 h-3.5" />
+                    <span>{testingSearch ? 'Menguji...' : 'Tes Pencarian Web'}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Penyedia Pencarian
+                    </label>
+                    <select
+                      value={settings.search_provider || 'model'}
+                      onChange={(e) => setSettings((s) => ({ ...s, search_provider: e.target.value }))}
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white"
+                    >
+                      <option value="model">Pengetahuan Model (Tanpa Web Search)</option>
+                      <option value="tavily">Tavily Search API</option>
+                      <option value="brave">Brave Search API</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      API Key Pencarian
+                    </label>
+                    <input
+                      type="password"
+                      value={settings.search_api_key || ''}
+                      onChange={(e) => setSettings((s) => ({ ...s, search_api_key: e.target.value }))}
+                      placeholder="Masukkan API Key Tavily/Brave Anda..."
+                      disabled={settings.search_provider === 'model' || !settings.search_provider}
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
                     />
                   </div>
                 </div>

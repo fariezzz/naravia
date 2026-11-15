@@ -1,5 +1,25 @@
 import { getSettingsMap } from './db';
 import { generateLLMResponse } from './llm';
+import { sanitizeCharacterDraftFields } from './metaFilter';
+
+// Aturan isi personalisasi yang wajib dipatuhi di setiap prompt riset/revisi.
+// Disertakan contoh salah/benar nyata dari kasus Kotohira Nagi agar model punya patokan konkret.
+const PERSONALIZATION_CONTENT_RULES = `ATURAN ISI KOLOM PERSONALISASI (description, personality, speaking_style, scenario):
+- Setiap kolom hanya berisi konten final siap pakai sebagai prompt karakter. JANGAN menulis kalimat tentang proses riset, sumber, bahan pencarian, kartu, kanon, pengguna, atau roleplay itu sendiri.
+- JANGAN memulai kolom dengan label seperti "Deskripsi:", "Karakterisasi roleplay:", atau sejenisnya. Langsung tulis isinya.
+- Kolom "scenario" hanya narasi adegan (suasana, tempat, apa yang sedang dilakukan karakter). JANGAN menulis instruksi untuk pengguna, JANGAN menawarkan pilihan peran ("pengguna bisa menjadi..."), JANGAN menjelaskan cara roleplay berjalan.
+- Ketidakpastian fakta ditandai lewat array "uncertainFields", BUKAN lewat kalimat penjelasan di dalam kolom.
+- JANGAN gunakan karakter em dash (-) di teks manapun, gunakan tanda hubung biasa atau koma.
+
+CONTOH SALAH (dari kasus nyata, JANGAN ditiru):
+- description salah: "Kotohira Nagi adalah karakter dari BanG Dream! Our Notes dan gitaris band millsage. Informasi yang tersedia dalam bahan pencarian mengonfirmasi nama, band, dan perannya sebagai gitaris, tetapi belum memuat rincian profil resmi lainnya. Kartu ini mempertahankan fakta tersebut dan mengembangkan karakterisasi untuk roleplay tanpa menganggapnya sebagai fakta kanon."
+- scenario salah: "...Pengguna bisa menjadi teman, rekan band, atau seseorang yang kebetulan datang berkunjung; hubungan dan perkembangan ceritanya dapat ditentukan selama roleplay."
+- personality salah (diawali label): "Karakterisasi roleplay: tenang, peka terhadap suasana..."
+
+CONTOH BENAR (versi final siap pakai):
+- description benar: "Kotohira Nagi adalah gitaris band millsage dari BanG Dream! Our Notes."
+- scenario benar: "Percakapan dimulai di ruang latihan millsage setelah sesi latihan. Kabel-kabel masih terpasang, suara ampli baru saja mereda, dan Nagi sedang merapikan gitarnya."
+- personality benar (tanpa label): "Tenang, peka terhadap suasana, dan lebih mudah menunjukkan perhatian lewat tindakan kecil daripada kata-kata panjang."`;
 
 export interface RevisionVerificationResult {
   valid: boolean;
@@ -29,7 +49,7 @@ export interface GeneratedCharacterDraft {
 /**
  * Mencari referensi di web jika kunci API pencarian gratis (Tavily / Brave) tersedia.
  */
-async function performOptionalWebSearch(query: string): Promise<{ snippets: string; sources: string[] }> {
+export async function performOptionalWebSearch(query: string): Promise<{ snippets: string; sources: string[] }> {
   const settings = getSettingsMap();
   const provider = (settings.search_provider || 'model').toLowerCase();
   const apiKey = (
@@ -128,6 +148,8 @@ ATURAN RISET & KEJUJURAN (SANGAT PENTING):
 4. Buat minimal 2 sapaan awal (greeting) yang berbeda situasi pembukanya agar pengguna bisa memilih saat mulai chat.
 5. Buat 3 pasang contoh dialog (example_dialogues) yang benar-benar memamerkan ciri khas gaya bicara karakter tersebut.
 
+${PERSONALIZATION_CONTENT_RULES}
+
 FORMAT KELUARAN:
 Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika memungkinkan) dengan struktur persis berikut:
 {
@@ -211,7 +233,7 @@ Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika m
     ? ['description', 'scenario']
     : [];
 
-  return {
+  return sanitizeCharacterDraftFields({
     name: String(parsed.name || 'Karakter Baru').trim(),
     tagline: String(parsed.tagline || '').trim(),
     description: String(parsed.description || '').trim(),
@@ -243,7 +265,7 @@ Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika m
       sources: mergedSources,
       uncertainFields,
     },
-  };
+  });
 }
 
 /**
@@ -352,6 +374,8 @@ PANDUAN PEMBARUAN:
 2. Jika status TIDAK VALID: Pertahankan fakta kanon yang benar seperti yang dijelaskan dalam catatan verifikasi, tetapi kamu boleh menyesuaikan aspek gaya atau nuansa tanpa merusak kebenaran fakta kanon.
 3. Selalu perbarui ringkasan "research_notes.summary" untuk mencatat poin revisi yang telah diproses.
 
+${PERSONALIZATION_CONTENT_RULES}
+
 Kembalikan HANYA objek JSON valid dengan struktur persis sama seperti kartu karakter sebelumnya:
 {
   "name": "${currentDraft.name}",
@@ -429,7 +453,7 @@ ${webSearchContext ? `REFERENSI TAMBAHAN DARI WEB:\n${webSearchContext.slice(0, 
     },
   };
 
-  return updatedDraft;
+  return sanitizeCharacterDraftFields(updatedDraft);
 }
 
 function extractJsonObject(text: string): Record<string, any> | null {

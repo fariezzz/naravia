@@ -8,6 +8,7 @@ import {
   reviseCharacterDraft,
   verifyResearchRevision,
 } from '@/lib/research';
+import { sanitizeCharacterDraftFields } from '@/lib/metaFilter';
 
 export async function POST(req: NextRequest) {
   try {
@@ -68,6 +69,19 @@ export async function POST(req: NextRequest) {
         reply: cleanCharacterOutput(reply.text, tempCharRow.name),
         modelUsed: reply.modelUsed,
       });
+    }
+
+    // Mode 4: Bersihkan Kalimat Meta AI dari Kolom Personalisasi (Tanpa Menyimpan)
+    if (body.mode === 'sanitize') {
+      const fields = body.fields || {};
+      const sanitized = sanitizeCharacterDraftFields({
+        description: String(fields.description || ''),
+        personality: String(fields.personality || ''),
+        speaking_style: String(fields.speaking_style || ''),
+        scenario: String(fields.scenario || ''),
+      });
+
+      return NextResponse.json({ fields: sanitized });
     }
 
     // Mode 3: Revisi Riset Berdasarkan Masukan Pengguna dengan Verifikasi Fakta

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb, getSettingsMap, updateSettingsMap } from '@/lib/db';
 import { generateLLMResponse } from '@/lib/llm';
 import { cleanupOrphanedUploads } from '@/lib/assets';
+import { performOptionalWebSearch } from '@/lib/research';
 
 export async function GET() {
   try {
@@ -224,6 +225,38 @@ export async function POST(req: NextRequest) {
         reply: res.text,
         modelUsed: res.modelUsed,
         providerUsed: res.providerUsed,
+      });
+    }
+
+    if (body.action === 'test_search') {
+      const query = String(body.query || 'Hatsune Miku karakter vocaloid').trim();
+      const currentSettings = getSettingsMap();
+      const provider = (currentSettings.search_provider || 'model').toLowerCase();
+
+      if (provider === 'model') {
+        return NextResponse.json({
+          success: true,
+          provider,
+          snippets: '',
+          sources: [],
+          info: 'Penyedia pencarian masih diatur ke "Pengetahuan Model" (tanpa web search eksternal). Pilih Tavily atau Brave dan isi API Key untuk menguji pencarian web asli.',
+        });
+      }
+
+      const result = await performOptionalWebSearch(query);
+      if (!result.snippets && result.sources.length === 0) {
+        return NextResponse.json(
+          { error: `Pencarian via ${provider} gagal atau tidak mengembalikan hasil. Periksa kembali API Key Anda.` },
+          { status: 400 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        provider,
+        query,
+        sources: result.sources,
+        snippetsPreview: result.snippets.slice(0, 1500),
       });
     }
 

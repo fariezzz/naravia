@@ -115,6 +115,9 @@ export default function CharacterForm({
   const [revising, setRevising] = useState(false);
   const [verificationResult, setVerificationResult] = useState<{ valid: boolean; explanation: string } | null>(null);
 
+  // State Pembersihan Kalimat Meta AI pada Kolom Personalisasi
+  const [sanitizing, setSanitizing] = useState(false);
+
   useEffect(() => {
     fetch('/api/worlds')
       .then((r) => r.json())
@@ -232,6 +235,42 @@ export default function CharacterForm({
     } finally {
       setImporting(false);
       e.target.value = '';
+    }
+  };
+
+  const handleSanitizeMetaSentences = async () => {
+    setSanitizing(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'sanitize',
+          fields: {
+            description: form.description,
+            personality: form.personality,
+            speaking_style: form.speaking_style,
+            scenario: form.scenario,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal membersihkan kalimat meta.');
+
+      setForm((prev) => ({
+        ...prev,
+        description: data.fields.description ?? prev.description,
+        personality: data.fields.personality ?? prev.personality,
+        speaking_style: data.fields.speaking_style ?? prev.speaking_style,
+        scenario: data.fields.scenario ?? prev.scenario,
+      }));
+      setNotice('Kalimat meta AI berhasil dibersihkan dari kolom personalisasi. Periksa hasilnya, lalu simpan jika sudah sesuai.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal membersihkan kalimat meta.');
+    } finally {
+      setSanitizing(false);
     }
   };
 
@@ -656,25 +695,25 @@ export default function CharacterForm({
                   </label>
                   <span className="text-[10px] text-indigo-700">Diverifikasi kebenaran faktanya sebelum diterapkan</span>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    rows={3}
                     value={revisionInput}
                     onChange={(e) => setRevisionInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
+                      if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         handleApplyRevision();
                       }
                     }}
                     placeholder='Contoh: "Ubah umurnya jadi 17 tahun dan tambahkan bahwa dia punya adik perempuan bernama Alisa"'
-                    className="flex-1 h-9 px-3 rounded-xl border border-indigo-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                    className="w-full min-h-[84px] px-3 py-2.5 rounded-xl border border-indigo-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs resize-none leading-relaxed"
                   />
                   <button
                     type="button"
                     disabled={revising || !revisionInput.trim()}
                     onClick={handleApplyRevision}
-                    className="h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0 transition-colors shadow-2xs"
+                    className="w-full sm:w-auto sm:self-end h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0 transition-colors shadow-2xs"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>{revising ? 'Memverifikasi...' : 'Verifikasi & Terapkan Revisi'}</span>
@@ -789,7 +828,19 @@ export default function CharacterForm({
 
           {/* Personalisasi Mendalam */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-2xs">
-            <h3 className="text-sm font-semibold text-slate-900">Personalisasi & Peran</h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-slate-900">Personalisasi & Peran</h3>
+              <button
+                type="button"
+                disabled={sanitizing}
+                onClick={handleSanitizeMetaSentences}
+                className="h-8 px-3 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[11px] font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors disabled:opacity-50"
+                title="Hapus kalimat tentang proses riset/roleplay yang bocor ke kolom personalisasi"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{sanitizing ? 'Membersihkan...' : 'Bersihkan Kalimat Meta'}</span>
+              </button>
+            </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
