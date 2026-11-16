@@ -13,8 +13,10 @@ export async function buildTurnContext(params: {
   historyMessages: MessageRow[];
   isAlternativeVariation?: boolean;
   isContinuation?: boolean;
+  // Pesan pembuka: tidak ada riwayat sebelumnya yang bisa dipakai sebagai konteks
+  isOpeningLine?: boolean;
 }) {
-  const { userId, chat, character, historyMessages, isAlternativeVariation, isContinuation } = params;
+  const { userId, chat, character, historyMessages, isAlternativeVariation, isContinuation, isOpeningLine } = params;
   const settings = await getUserSettings(userId);
 
   const historyLimit = Math.max(4, parseInt(settings.history_limit || '20', 10) || 20);
@@ -43,6 +45,9 @@ export async function buildTurnContext(params: {
   if (isAlternativeVariation) {
     systemPrompt += `\n\nCATATAN VARIASI: Berikan sudut pandang respons, ekspresi, atau kelanjutan kalimat yang berbeda dari jawaban sebelumnya, namun tetap 100% konsisten dengan kepribadian ${character.name}.`;
   }
+  if (isOpeningLine) {
+    systemPrompt += `\n\nCATATAN PEMBUKA: Ini adalah kalimat pembuka percakapan. Belum ada ucapan dari pengguna. Tulis LANGSUNG sebagai ${character.name} yang membuka percakapan, berupa narasi tindakan dan dialog. JANGAN menulis transkrip percakapan, JANGAN menulis label peran seperti "${character.name}:" atau nama pengguna diikuti titik dua, JANGAN mengarang ucapan pengguna, dan JANGAN menulis kalimat tentang proses atau lampiran.`;
+  }
   if (isContinuation) {
     systemPrompt += `\n\nCATATAN KELANJUTAN: Pengguna diam atau memberikan jeda bagi ${character.name} untuk melanjutkan ucapan, tindakan, atau peristiwa selanjutnya. Lanjutkan narasi atau dialog secara mengalir dan alami dari situasi terakhir tanpa mengulang kalimat sebelumnya.`;
   }
@@ -60,6 +65,15 @@ export async function buildTurnContext(params: {
     llmMessages.push({
       role: 'user',
       content: `(Lanjutkan secara alami apa yang sedang ${character.name} bicarakan, lakukan, atau reaksi selanjutnya)`,
+    });
+  }
+
+  // Tanpa satu pun pesan pengguna, banyak model mengisi kekosongan dengan
+  // mengarang transkrip percakapan lengkap. Pemicu eksplisit mencegahnya.
+  if (llmMessages.length === 1) {
+    llmMessages.push({
+      role: 'user',
+      content: `(Tulis kalimat pembuka ${character.name} untuk memulai percakapan ini, hanya ucapan dan tindakan ${character.name} sendiri)`,
     });
   }
 

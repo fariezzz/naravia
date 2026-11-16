@@ -43,7 +43,7 @@ body {
 .brand-wordmark {
   display: inline-block;
   letter-spacing: 0.005em;
-  transform: scaleX(1.06);
+  transform: scaleX(1.17);
   transform-origin: left center;
 }
 

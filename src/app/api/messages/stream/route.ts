@@ -62,6 +62,8 @@ export async function POST(req: NextRequest) {
         character,
         historyMessages: historyBefore,
         isAlternativeVariation: true,
+        // Mengulang pesan pertama berarti tidak ada riwayat sebelumnya
+        isOpeningLine: historyBefore.length === 0,
       });
       ({ llmMessages, temperature, maxTokens } = ctx);
       charMessageId = msg.id;

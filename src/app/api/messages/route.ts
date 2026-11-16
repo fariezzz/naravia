@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { buildTurnContext, maybeAutoTitle, runBackgroundMemoryTasks } from '@/lib/chatTurn';
-import { CharacterRow, ChatRow, execute, MessageRow, nowIso, query, queryOne } from '@/lib/db';
+import { CharacterRow, ChatRow, execute, MessageRow, nowIso, query, queryOne, withTransaction } from '@/lib/db';
 import { formatMessageRow, parseJsonSafe, stripOwner } from '@/lib/format';
-import { handleApiError, jsonError, readJson } from '@/lib/http';
+import { handleApiError, HttpError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
 import { cleanCharacterOutput, generateLLMResponse } from '@/lib/llm';
 import { enforceLlmRateLimit } from '@/lib/rateLimit';
@@ -18,7 +18,7 @@ async function generateCharacterText(
   chat: ChatRow,
   character: CharacterRow,
   history: MessageRow[],
-  opts: { isAlternativeVariation?: boolean; isContinuation?: boolean }
+  opts: { isAlternativeVariation?: boolean; isContinuation?: boolean; isOpeningLine?: boolean }
 ) {
   const ctx = await buildTurnContext({ userId, chat, character, historyMessages: history, ...opts });
   const callOpts = {
@@ -85,6 +85,8 @@ export async function POST(req: NextRequest) {
 
       const turn = await generateCharacterText(user.id, chat, character, historyBefore, {
         isAlternativeVariation: true,
+        // Mengulang pesan pertama berarti tidak ada riwayat sebelumnya
+        isOpeningLine: historyBefore.length === 0,
       });
 
       let alternatives = parseJsonSafe<string[]>(msg.alternatives, [msg.content]);
@@ -125,7 +127,83 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // 5. Kirim pesan baru (jalur non-streaming, cadangan bila streaming tidak dipakai)
+    // 5. Mundur (rewind): hapus pesan terpilih beserta seluruh pesan sesudahnya,
+    //    termasuk memori yang bersumber dari pesan-pesan itu.
+    if (action === 'rewind') {
+      const messageId = String(body.messageId || '').trim();
+      if (!messageId) return jsonError('ID pesan wajib diisi.', 400);
+
+      // Satu transaksi agar pesan, memori, dan ringkasan tidak pernah
+      // tertinggal dalam keadaan setengah terhapus
+      const result = await withTransaction(async (client) => {
+        const msg = await requireOwnedMessage(user.id, messageId, client);
+        const chat = await requireOwnedChat(user.id, msg.chat_id, client);
+
+        // Urutan sama dengan yang dipakai saat menampilkan riwayat; id dipakai
+        // sebagai pemecah seri agar titik potongnya selalu sama
+        const ordered = await query<{ id: string }>(
+          'SELECT id FROM messages WHERE chat_id = $1 ORDER BY created_at ASC, id ASC',
+          [chat.id],
+          client
+        );
+        const cutIndex = ordered.findIndex((m) => m.id === msg.id);
+        if (cutIndex < 0) throw new HttpError(404, 'Pesan tidak ditemukan.');
+
+        // Varian swipe tersimpan di kolom alternatives pada baris pesan itu sendiri,
+        // jadi menghapus barisnya sekaligus menghapus seluruh variannya
+        const doomedIds = ordered.slice(cutIndex).map((m) => m.id);
+
+        // Memori manual lewat "Ingat Ini" dan memori otomatis sama-sama menyimpan
+        // source_message_id, jadi keduanya bisa dilacak dari pesan yang dihapus.
+        // Memori yang titik sumbernya masih tersisa tidak disentuh.
+        const removedMemories = await query<{ id: string }>(
+          `DELETE FROM memories
+           WHERE user_id = $1 AND source_message_id = ANY($2::text[])
+           RETURNING id`,
+          [user.id, doomedIds],
+          client
+        );
+
+        await execute('DELETE FROM messages WHERE chat_id = $1 AND id = ANY($2::text[])', [chat.id, doomedIds], client);
+
+        // Ringkasan yang titik acuannya ikut terhapus sudah tidak sahih lagi.
+        // Dikosongkan supaya dibuat ulang oleh mekanisme yang sudah ada,
+        // bukan ditambal agar tidak menceritakan kejadian yang sudah dihapus.
+        const acuanTerhapus = Boolean(
+          chat.summarized_until_msg_id && doomedIds.includes(chat.summarized_until_msg_id)
+        );
+        // Ringkasan tanpa titik acuan tidak bisa dilacak cakupannya, jadi tidak dipertahankan
+        const acuanTidakTerlacak = !chat.summarized_until_msg_id && Boolean((chat.summary || '').trim());
+        const summaryCleared = acuanTerhapus || acuanTidakTerlacak;
+
+        if (summaryCleared) {
+          await execute(
+            `UPDATE chats SET summary = '', summarized_until_msg_id = NULL, updated_at = now()
+             WHERE id = $1 AND user_id = $2`,
+            [chat.id, user.id],
+            client
+          );
+        } else {
+          await execute('UPDATE chats SET updated_at = now() WHERE id = $1', [chat.id], client);
+        }
+
+        const updatedChat = await queryOne<ChatRow>('SELECT * FROM chats WHERE id = $1', [chat.id], client);
+        return {
+          deletedMessageIds: doomedIds,
+          deletedMemoryIds: removedMemories.map((m) => m.id),
+          summaryCleared,
+          chat: updatedChat ? stripOwner(updatedChat) : null,
+        };
+      });
+
+      return NextResponse.json({
+        success: true,
+        ...result,
+        deletedCount: result.deletedMessageIds.length,
+      });
+    }
+
+    // 6. Kirim pesan baru (jalur non-streaming, cadangan bila streaming tidak dipakai)
     enforceLlmRateLimit(user.id);
     const chatId = String(body.chatId || '').trim();
     const content = String(body.content || '').trim();

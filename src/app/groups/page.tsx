@@ -113,11 +113,12 @@ export default function GroupsPage() {
   };
 
   return (
-    <div className="max-w-5xl w-full mx-auto px-4 py-6 space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">Grup Chat Multi-Karakter</h1>
-          <p className="text-xs text-slate-500">
+    <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 py-8 space-y-7">
+      {/* Header mengikuti pola halaman Jelajah agar judul antarhalaman konsisten */}
+      <header className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
+        <div className="space-y-2.5">
+          <h1 className="font-display text-3xl sm:text-4xl text-slate-900 dark:text-white">Grup Chat Multi-Karakter</h1>
+          <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400 max-w-xl">
             Pertemukan dua karakter atau lebih dalam satu ruangan. Giliran bicara ditentukan dari nama yang disebut atau bergantian otomatis.
           </p>
         </div>
@@ -135,7 +136,7 @@ export default function GroupsPage() {
           <Plus className="w-4 h-4" />
           <span>Buat Grup Chat</span>
         </button>
-      </div>
+      </header>
 
       {error && (
         <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2">

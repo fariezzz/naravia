@@ -577,6 +577,56 @@ export function cleanCharacterOutput(raw: string, characterName?: string): strin
   text = text.replace(/<function_call>|<\/function_call>/gi, '').trim();
   text = text.replace(/<call:[\s\S]*?>[\s\S]*?<\/call:[\s\S]*?>/gi, '').trim();
 
+  // 2b. Buang metadata dan transkrip percakapan yang dikarang model.
+  // Terjadi saat model tidak menerima satu pun pesan pengguna sebagai konteks,
+  // misalnya ketika pengguna menekan "Ulang" pada pesan pembuka percakapan:
+  // model mengisi kekosongan dengan menulis seluruh percakapan berikut label perannya.
+  text = text
+    .replace(/^[ \t]*\*{0,2}(attachments?|lampiran)\*{0,2}[ \t]*:[ \t]*(none|null|nil|tidak ada|-)?[ \t]*$/gim, '')
+    .trim();
+
+  const labelPattern = /^[ \t]*\*{0,2}([\p{L}][\p{L}\p{M}\p{Zs}.'’-]{0,30}?)\*{0,2}[ \t]*:[ \t]+\S/u;
+  const labelOf = (line: string): string | null => {
+    const m = line.match(labelPattern);
+    return m ? m[1].trim().toLowerCase() : null;
+  };
+
+  const lines = text.split('\n');
+  const labeledIdx = lines.map((l, i) => (labelOf(l) ? i : -1)).filter((i) => i >= 0);
+  const distinctLabels = new Set(labeledIdx.map((i) => labelOf(lines[i]) as string));
+
+  // Dua giliran berlabel dengan dua nama berbeda menandakan transkrip, bukan satu balasan
+  if (labeledIdx.length >= 2 && distinctLabels.size >= 2) {
+    const charLabel = (characterName || '').trim().toLowerCase();
+    let start: number | undefined = labeledIdx.find((i) => labelOf(lines[i]) === charLabel);
+
+    if (start === undefined) {
+      // Tanpa label karakter, pakai narasi sebelum transkrip bila cukup berisi
+      const sebelum = lines.slice(0, labeledIdx[0]).join('\n').trim();
+      if (sebelum.length > 20) {
+        text = sebelum;
+      } else {
+        start = labeledIdx[0];
+      }
+    }
+
+    if (start !== undefined) {
+      const ownLabel = labelOf(lines[start]) as string;
+      let end = lines.length;
+      for (const i of labeledIdx) {
+        if (i > start && labelOf(lines[i]) !== ownLabel) {
+          end = i;
+          break;
+        }
+      }
+      text = lines
+        .slice(start, end)
+        .map((l) => (labelOf(l) === ownLabel ? l.replace(/^[ \t]*\*{0,2}[^:]{1,32}\*{0,2}[ \t]*:[ \t]+/, '') : l))
+        .join('\n')
+        .trim();
+    }
+  }
+
   // 3. Bersihkan prefix nama karakter di awal teks (misal: "Eli Ayase: ...")
   if (characterName) {
     const escaped = characterName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

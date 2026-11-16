@@ -20,6 +20,8 @@ import {
   X,
   Copy,
   Square,
+  MoreHorizontal,
+  Rewind,
 } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -116,7 +118,14 @@ export default function ChatRoomPage() {
 
   const [deleteChatModal, setDeleteChatModal] = useState(false);
   const [deleteMsgTarget, setDeleteMsgTarget] = useState<string | null>(null);
+  // Pesan yang dipilih sebagai titik mundur; pesan ini dan semua sesudahnya akan dihapus
+  const [rewindTarget, setRewindTarget] = useState<string | null>(null);
+  const [rewinding, setRewinding] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  // Menu aksi pesan di layar mobile: hanya satu yang terbuka, arah dibuka ke atas bila ruang di bawah sempit
+  const [actionMenu, setActionMenu] = useState<{ id: string; up: boolean } | null>(null);
+  const actionMenuRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const [streamingCharText, setStreamingCharText] = useState<string>('');
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
 
@@ -233,6 +242,50 @@ export default function ChatRoomPage() {
       textareaRef.current.style.height = '';
     }
   }, [inputText]);
+
+  // Tutup menu aksi saat mengetuk di luar menu atau menekan Escape
+  useEffect(() => {
+    if (!actionMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (actionMenuRef.current && target && !actionMenuRef.current.contains(target)) {
+        setActionMenu(null);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Kembalikan fokus ke tombol menu agar pengguna keyboard tidak kehilangan posisi
+        actionMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+        setActionMenu(null);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [actionMenu]);
+
+  const toggleActionMenu = (msgId: string, trigger: HTMLElement) => {
+    if (actionMenu?.id === msgId) {
+      setActionMenu(null);
+      return;
+    }
+    // Perkiraan tinggi menu empat baris; dipakai untuk memilih arah buka agar menu tidak terpotong
+    const MENU_HEIGHT = 150;
+    const btn = trigger.getBoundingClientRect();
+    const box = messagesScrollRef.current?.getBoundingClientRect();
+    const spaceBelow = (box ? box.bottom : window.innerHeight) - btn.bottom;
+    const spaceAbove = btn.top - (box ? box.top : 0);
+    setActionMenu({ id: msgId, up: spaceBelow < MENU_HEIGHT && spaceAbove > spaceBelow });
+  };
+
+  // Menu ditutup lebih dulu, lalu aksi yang sama dengan tombol desktop dijalankan
+  const runMenuAction = (action: () => void) => {
+    setActionMenu(null);
+    action();
+  };
 
   const handleStopStreaming = () => {
     if (abortControllerRef.current) {
@@ -560,6 +613,51 @@ export default function ChatRoomPage() {
     }
   };
 
+  const handleConfirmRewind = async () => {
+    if (!rewindTarget) return;
+    setRewinding(true);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rewind', messageId: rewindTarget }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal memundurkan percakapan.');
+
+      const deletedIds: string[] = data.deletedMessageIds || [];
+      const deletedMemIds: string[] = data.deletedMemoryIds || [];
+
+      const remainingMessages = messages.filter((m) => !deletedIds.includes(m.id));
+      const remainingMemories = memories.filter((m) => !deletedMemIds.includes(m.id));
+      // Ringkasan yang dikosongkan server harus ikut hilang di tampilan,
+      // supaya kejadian yang sudah dihapus tidak lagi terbaca di panel samping
+      const nextChat = data.chat ? { ...chat, ...data.chat } : chat;
+
+      setMessages(remainingMessages);
+      setMemories(remainingMemories);
+      setChat(nextChat);
+      setRewindTarget(null);
+
+      setClientCache(`chat_room_${chatId}`, {
+        chat: nextChat,
+        character,
+        messages: remainingMessages,
+        memories: remainingMemories,
+        otherChats,
+        personas,
+        userPersona,
+      });
+      // Daftar chat di beranda menampilkan cuplikan pesan terakhir, jadi harus dimuat ulang
+      invalidateClientCache('home_recent_chats');
+      invalidateClientCache('chats_list');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memundurkan percakapan.');
+    } finally {
+      setRewinding(false);
+    }
+  };
+
   const handlePinMessageToMemory = async (msg: MessageItem) => {
     if (!character) return;
     try {
@@ -704,6 +802,14 @@ export default function ChatRoomPage() {
     }
   };
 
+  // Jumlah pesan yang akan dihapus bila mundur dikonfirmasi, dihitung dari
+  // titik pesan terpilih sampai pesan terakhir
+  const rewindCutIndex = rewindTarget ? messages.findIndex((m) => m.id === rewindTarget) : -1;
+  const rewindInfo = {
+    count: rewindCutIndex >= 0 ? messages.length - rewindCutIndex : 0,
+    isFirst: rewindCutIndex === 0,
+  };
+
   if (loading) {
     return (
       <div className="max-w-4xl w-full mx-auto px-4 py-8 text-sm text-slate-500">
@@ -844,13 +950,17 @@ export default function ChatRoomPage() {
       <div className="flex-1 flex gap-4 mt-0 sm:mt-3 min-h-0">
         {/* Daftar Pesan */}
         <div className="flex-1 bg-white dark:bg-[#0c1220] border-0 sm:border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden sm:rounded-2xl shadow-none sm:shadow-2xs transition-colors">
-          <div className="flex-1 overflow-y-auto px-3.5 py-4 sm:p-6 space-y-4 sm:space-y-5">
+          <div ref={messagesScrollRef} className="flex-1 overflow-y-auto px-3.5 py-4 sm:p-6 space-y-4 sm:space-y-5">
             {messages.map((msg) => {
               const isChar = msg.role === 'character';
               const altCount = msg.alternatives?.length || 1;
               const currentAltIdx = msg.active_alt_index || 0;
               const isEditingThis = editingMsgId === msg.id;
               const isRegeneratingThis = regeneratingId === msg.id;
+              const isMenuOpen = actionMenu?.id === msg.id;
+              // Mundur dinonaktifkan selama ada respons yang sedang dibuat,
+              // agar riwayat tidak terhapus di tengah proses pembuatan pesan
+              const isBusy = sending || Boolean(streamingMsgId) || Boolean(regeneratingId);
 
               return (
                 <div
@@ -979,10 +1089,11 @@ export default function ChatRoomPage() {
                         </button>
                       )}
 
+                      {/* Salin, Edit, Ingat Ini, dan Hapus tampil berderet mulai breakpoint md; di bawahnya masuk menu */}
                       <button
                         type="button"
                         onClick={() => handleCopyMessage(msg.id, msg.content)}
-                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 text-[11px] transition-colors ${
+                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hidden md:inline-flex items-center gap-1 text-[11px] transition-colors ${
                           copiedMsgId === msg.id ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'hover:text-slate-700 dark:hover:text-slate-200'
                         }`}
                         title="Salin Isi Pesan"
@@ -1006,7 +1117,7 @@ export default function ChatRoomPage() {
                           setEditingMsgId(msg.id);
                           setEditingContent(msg.content);
                         }}
-                        className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 inline-flex items-center gap-1 text-[11px]"
+                        className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 hidden md:inline-flex items-center gap-1 text-[11px]"
                         title="Edit Pesan"
                       >
                         <Edit3 className="w-3 h-3" />
@@ -1016,7 +1127,7 @@ export default function ChatRoomPage() {
                       <button
                         type="button"
                         onClick={() => handlePinMessageToMemory(msg)}
-                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 text-[11px] ${
+                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hidden md:inline-flex items-center gap-1 text-[11px] ${
                           msg.is_pinned_memory ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'hover:text-slate-700 dark:hover:text-slate-200'
                         }`}
                         title="Tandai sebagai Memori Jangka Panjang ('Ingat Ini')"
@@ -1027,12 +1138,121 @@ export default function ChatRoomPage() {
 
                       <button
                         type="button"
+                        disabled={isBusy}
+                        onClick={() => setRewindTarget(msg.id)}
+                        className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 hidden md:inline-flex items-center gap-1 text-[11px] disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Mundur ke Pesan Ini (pesan ini dan sesudahnya dihapus)"
+                      >
+                        <Rewind className="w-3 h-3" />
+                        <span>Mundur</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => setDeleteMsgTarget(msg.id)}
-                        className="p-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 inline-flex items-center gap-1 text-[11px]"
+                        className="p-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hidden md:inline-flex items-center gap-1 text-[11px]"
                         title="Hapus Pesan"
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
+
+                      {/* Menu aksi untuk layar di bawah md. Handler yang dipanggil sama persis dengan tombol desktop */}
+                      <div ref={isMenuOpen ? actionMenuRef : undefined} className="relative md:hidden">
+                        <button
+                          type="button"
+                          onClick={(e) => toggleActionMenu(msg.id, e.currentTarget)}
+                          aria-haspopup="menu"
+                          aria-expanded={isMenuOpen}
+                          aria-controls={isMenuOpen ? `aksi-pesan-${msg.id}` : undefined}
+                          aria-label="Aksi lainnya untuk pesan ini"
+                          title="Aksi Lainnya"
+                          className={`w-7 h-7 rounded-lg inline-flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                            isMenuOpen
+                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                              : 'hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'
+                          }`}
+                        >
+                          <MoreHorizontal className="w-3.5 h-3.5" />
+                        </button>
+
+                        {isMenuOpen && (
+                          <div
+                            id={`aksi-pesan-${msg.id}`}
+                            role="menu"
+                            aria-label="Aksi pesan"
+                            className={`absolute right-0 z-30 w-40 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1729] shadow-lg p-1.5 ${
+                              actionMenu?.up ? 'bottom-full mb-1' : 'top-full mt-1'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => runMenuAction(() => handleCopyMessage(msg.id, msg.content))}
+                              className="w-full h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:bg-slate-100 dark:focus-visible:bg-slate-800 focus-visible:outline-none flex items-center gap-2"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Salin</span>
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() =>
+                                runMenuAction(() => {
+                                  setEditingMsgId(msg.id);
+                                  setEditingContent(msg.content);
+                                })
+                              }
+                              className="w-full h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:bg-slate-100 dark:focus-visible:bg-slate-800 focus-visible:outline-none flex items-center gap-2"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => runMenuAction(() => handlePinMessageToMemory(msg))}
+                              className={`w-full h-8 px-2.5 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:bg-slate-100 dark:focus-visible:bg-slate-800 focus-visible:outline-none flex items-center gap-2 ${
+                                msg.is_pinned_memory
+                                  ? 'text-indigo-600 dark:text-indigo-400 font-medium'
+                                  : 'text-slate-700 dark:text-slate-200'
+                              }`}
+                            >
+                              <Bookmark className="w-3.5 h-3.5" />
+                              <span>{msg.is_pinned_memory ? 'Tersimpan' : 'Ingat Ini'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={isBusy}
+                              onClick={() => runMenuAction(() => setRewindTarget(msg.id))}
+                              className="w-full h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:bg-slate-100 dark:focus-visible:bg-slate-800 focus-visible:outline-none flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <Rewind className="w-3.5 h-3.5" />
+                              <span>Mundur</span>
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => runMenuAction(() => setDeleteMsgTarget(msg.id))}
+                              className="w-full h-8 px-2.5 rounded-lg text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 focus-visible:bg-rose-50 dark:focus-visible:bg-rose-950/40 focus-visible:outline-none flex items-center gap-2"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Hapus</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Umpan balik salin tetap terlihat di mobile karena menu langsung tertutup */}
+                      {copiedMsgId === msg.id && (
+                        <span
+                          role="status"
+                          className="md:hidden inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400"
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>Tersalin</span>
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -1304,13 +1524,29 @@ export default function ChatRoomPage() {
         onCancel={() => setDeleteChatModal(false)}
       />
 
+      {/* Hapus sengaja hanya membuang satu pesan. Ingatan dan ringkasan tidak
+          disentuh, jadi dibedakan dari Mundur lewat keterangan di dialog. */}
       <ConfirmModal
         open={Boolean(deleteMsgTarget)}
         title="Hapus Pesan Ini?"
-        description="Pesan yang dipilih akan dihapus dari riwayat percakapan."
+        description="Pesan yang dipilih akan dihapus dari riwayat percakapan. Ingatan dan ringkasan yang berasal dari pesan ini tidak ikut dihapus, jadi karakter masih bisa mengingatnya. Pakai Mundur bila kamu ingin membuang bagian cerita ini sekaligus ingatannya."
         confirmLabel="Hapus Pesan"
         onConfirm={handleConfirmDeleteMessage}
         onCancel={() => setDeleteMsgTarget(null)}
+      />
+
+      <ConfirmModal
+        open={Boolean(rewindTarget)}
+        loading={rewinding}
+        title={rewindInfo.isFirst ? 'Mundur ke Awal Percakapan?' : 'Mundur ke Pesan Ini?'}
+        description={
+          rewindInfo.isFirst
+            ? `Seluruh pesan di percakapan ini akan dihapus, termasuk sapaan awal, sebanyak ${rewindInfo.count} pesan. Ingatan yang berasal dari pesan-pesan itu juga dihapus, dan ringkasan percakapan akan disusun ulang. Tindakan ini tidak bisa dibatalkan.`
+            : `Pesan ini beserta semua pesan sesudahnya akan dihapus, sebanyak ${rewindInfo.count} pesan. Ingatan yang berasal dari pesan-pesan itu juga dihapus, dan ringkasan percakapan akan disusun ulang. Tindakan ini tidak bisa dibatalkan.`
+        }
+        confirmLabel="Mundur dan Hapus"
+        onConfirm={handleConfirmRewind}
+        onCancel={() => setRewindTarget(null)}
       />
     </div>
   );
