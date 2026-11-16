@@ -15,14 +15,18 @@ import {
   Image as ImageIcon,
   Plus,
   Star,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ImageCropModal from '@/components/ImageCropModal';
 import AccountPanel from '@/components/AccountPanel';
+import { useTheme } from '@/lib/ThemeContext';
 import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
 
 export default function SettingsPage() {
+  const { theme, setTheme } = useTheme();
   const [activeTab, setActiveTab] = useState<'persona' | 'chat' | 'stats' | 'account' | 'data'>('persona');
 
   const [personas, setPersonas] = useState<any[]>(() => {
@@ -705,6 +709,7 @@ export default function SettingsPage() {
 
           {/* Tab 2: Preferensi Percakapan Pribadi */}
           {activeTab === 'chat' && (
+            <div className="space-y-5">
             <form
               onSubmit={handleSaveSettings}
               className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-5 shadow-2xs"
@@ -791,6 +796,54 @@ export default function SettingsPage() {
                 </button>
               </div>
             </form>
+
+            {/* Tampilan: tema disimpan di perangkat ini lewat localStorage,
+                jadi kartunya berdiri sendiri di luar form dan tidak perlu disimpan. */}
+            <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white">Tampilan</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Pilihan tema berlaku untuk perangkat ini dan langsung tersimpan.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {([
+                  { nilai: 'light' as const, label: 'Mode Terang', ikon: Sun, keterangan: 'Latar putih, cocok untuk ruangan terang.' },
+                  { nilai: 'dark' as const, label: 'Mode Gelap', ikon: Moon, keterangan: 'Latar gelap, lebih nyaman saat malam.' },
+                ]).map((opsi) => {
+                  const Ikon = opsi.ikon;
+                  const aktif = theme === opsi.nilai;
+                  return (
+                    <button
+                      key={opsi.nilai}
+                      type="button"
+                      onClick={() => setTheme(opsi.nilai)}
+                      aria-pressed={aktif}
+                      className={`text-left p-3.5 rounded-xl border transition-colors ${
+                        aktif
+                          ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Ikon
+                          className={`w-4 h-4 shrink-0 ${
+                            opsi.nilai === 'dark' ? 'text-indigo-500' : 'text-amber-500'
+                          }`}
+                        />
+                        <span className="text-xs font-semibold text-slate-900 dark:text-white">{opsi.label}</span>
+                        {aktif && <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600 ml-auto shrink-0" />}
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                        {opsi.keterangan}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            </div>
           )}
 
           {/* Tab 3: Statistik Pemakaian Token */}

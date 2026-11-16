@@ -35,6 +35,18 @@ body {
   letter-spacing: -0.015em;
 }
 
+/* Wordmark Naravia di navbar.
+   Instrument Serif tidak punya sumbu lebar, jadi peregangan dilakukan lewat
+   scaleX tipis. Jarak antar huruf dikembalikan ke normal karena nilai rapat
+   dari .font-display membuatnya terlihat gepeng pada ukuran kecil.
+   transform-origin kiri supaya posisi awal teks tidak bergeser. */
+.brand-wordmark {
+  display: inline-block;
+  letter-spacing: 0.005em;
+  transform: scaleX(1.06);
+  transform-origin: left center;
+}
+
 /* Masuk perlahan saat elemen pertama kali tampil, tanpa mengganggu pengguna yang membatasi animasi */
 @keyframes naravia-rise {
   from {

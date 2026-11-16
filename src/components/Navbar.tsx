@@ -3,16 +3,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Compass, Users, Globe, Globe2, Settings, Plus, Menu, X, Sun, Moon, ShieldCheck, LogOut } from 'lucide-react';
+import { Compass, Users, Globe, Globe2, Settings, Plus, Menu, X, ShieldCheck, LogOut } from 'lucide-react';
 import CharacterAvatar from './CharacterAvatar';
-import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/lib/AuthContext';
 
 const AUTH_PAGES = ['/login', '/register'];
 
 export default function Navbar() {
   const pathname = usePathname();
-  const { theme, toggleTheme } = useTheme();
   const { user, loading, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -48,21 +46,7 @@ export default function Navbar() {
       : []),
   ];
 
-  const themeButton = (compact: boolean) => (
-    <button
-      type="button"
-      onClick={toggleTheme}
-      className={`${compact ? 'w-8 h-8' : 'w-9 h-9'} rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center text-slate-700 dark:text-slate-300 transition-colors`}
-      title={theme === 'dark' ? 'Ganti ke Mode Terang' : 'Ganti ke Mode Gelap'}
-      aria-label="Ganti Tema"
-    >
-      {theme === 'dark' ? (
-        <Sun className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-amber-400`} />
-      ) : (
-        <Moon className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
-      )}
-    </button>
-  );
+  // Pengalih tema dipindahkan ke halaman Pengaturan, tab Preferensi Chat
 
   // Halaman masuk/daftar memakai tata letak panel penuh dengan tautan kembali sendiri
   if (isAuthPage) return null;
@@ -72,7 +56,7 @@ export default function Navbar() {
     return (
       <header className="sticky top-0 z-20 w-full bg-white/85 dark:bg-[#0c1220]/85 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 h-[58px] md:h-[68px] shrink-0">
         <div className="max-w-6xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between">
-          <Link href="/" className="font-display text-xl md:text-[1.4rem] text-slate-900 dark:text-white">
+          <Link href="/" className="font-display brand-wordmark text-xl md:text-[1.4rem] text-slate-900 dark:text-white">
             Naravia
           </Link>
           <div className="flex items-center gap-2 sm:gap-2.5">
@@ -82,7 +66,6 @@ export default function Navbar() {
             >
               Jelajah
             </Link>
-            {themeButton(false)}
             <Link
               href="/login"
               className="h-9 px-3.5 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center transition-colors"
@@ -111,7 +94,7 @@ export default function Navbar() {
         <div className="flex items-center gap-6">
           <Link
             href="/"
-            className="font-display text-xl text-slate-900 dark:text-white hover:text-slate-600 dark:hover:text-slate-300 transition-colors whitespace-nowrap"
+            className="font-display brand-wordmark text-xl text-slate-900 dark:text-white hover:text-slate-600 dark:hover:text-slate-300 transition-colors whitespace-nowrap"
           >
             Naravia
           </Link>
@@ -139,8 +122,6 @@ export default function Navbar() {
         </div>
 
         <div className="hidden md:flex items-center gap-2.5">
-          {themeButton(false)}
-
           <Link
             href="/characters/new"
             className="h-[36px] px-3.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium inline-flex items-center gap-1.5 whitespace-nowrap transition-colors shadow-xs"
@@ -202,7 +183,6 @@ export default function Navbar() {
         </div>
 
         <div className="flex md:hidden items-center gap-1.5">
-          {themeButton(true)}
           <Link
             href="/characters/new"
             className="h-8 px-2.5 rounded-lg bg-indigo-600 text-white text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap"
