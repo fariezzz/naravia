@@ -1,20 +1,36 @@
 # Naravia
 
-Platform percakapan dan roleplay karakter AI multi-pengguna berbasis **Next.js 15 (App Router)**, **React 19**, dan **PostgreSQL**. Setiap pengguna punya akun sendiri, dan seluruh karakter, percakapan, persona, dunia, serta memori bersifat privat per akun.
+Platform percakapan dan roleplay karakter AI multi-pengguna berbasis **Next.js 15 (App Router)**, **React 19**, dan **PostgreSQL**. Setiap pengguna punya akun sendiri. Karakter, percakapan, persona, dunia, dan memori bersifat privat per akun, kecuali karakter yang sengaja diterbitkan pemiliknya.
 
 ---
 
 ## Fitur Utama
 
+### Akun dan Keamanan
+
 - **Akun & Sesi Per Pengguna**: daftar, masuk, keluar, ganti kata sandi, keluar dari perangkat lain. Kata sandi di-hash dengan scrypt, sesi disimpan di PostgreSQL (cookie `httpOnly`, `secure` di produksi).
-- **Isolasi Data**: setiap query disaring berdasarkan pemilik. ID milik akun lain selalu dibalas 404.
-- **Peran Admin**: Panel Admin (`/admin`) untuk mengelola pengguna (buat, ubah peran, nonaktifkan, reset kata sandi, cabut sesi, hapus), mengatur provider AI dan kunci API global, membuka atau menutup pendaftaran, mengatur kuota token, serta melihat statistik dan log audit. Isi percakapan pengguna tidak ditampilkan ke admin.
+- **Isolasi Data**: setiap query disaring berdasarkan pemilik. ID milik akun lain selalu dibalas 404, bukan 403, agar keberadaan datanya tidak terbocorkan.
+- **Peran Admin**: Panel Admin (`/admin`) untuk mengelola pengguna (buat, ubah peran, nonaktifkan, reset kata sandi, cabut sesi, hapus), mengatur provider AI dan kunci API global, membuka atau menutup pendaftaran, mengatur kuota token, serta melihat statistik dan log audit. Isi percakapan pengguna tidak pernah ditampilkan ke admin.
 - **Kuota Token Harian**: ditegakkan di server, bukan hanya ditampilkan. Bisa diatur bawaan sistem atau per akun. Admin tidak dibatasi.
 - **Pembatas Laju**: percobaan masuk, pendaftaran, panggilan model AI, riset, dan unggahan dibatasi per IP atau akun.
-- **Dukungan Universal LLM**: OpenAI-compatible (OpenRouter, Groq, DeepSeek, 9Router, Ollama, dll.) dan Google AI Studio, dengan model riset terpisah opsional.
-- **Percakapan**: streaming balasan dengan tombol berhenti, swipe/regenerate, multi-persona, grup chat multi-karakter, lorebook, memori jangka panjang, judul chat otomatis, dan dark mode.
-- **Pembuat & Pengimpor Karakter**: riset otomatis berbasis AI/web dan impor kartu SillyTavern (PNG/JSON).
+- **Otorisasi File Per Berkas**: avatar karakter publik bisa dimuat siapa pun, avatar privat hanya oleh pemiliknya. Keputusan diambil di route `/uploads/*`, bukan di middleware.
+
+### Karakter
+
+- **Pembuat & Pengimpor Karakter**: riset otomatis berbasis AI atau pencarian web, dan impor kartu SillyTavern (PNG/JSON).
+- **Visibilitas Pribadi atau Publik**: karakter baru selalu privat sampai pemiliknya menerbitkannya. Karakter publik tampil di katalog `/jelajah` dengan nama pembuat, tanpa membocorkan catatan riset, contoh dialog, atau email pembuat.
+- **Sumber Riset Terkurasi**: tautan dinormalkan, parameter pelacak dibuang, duplikat dihapus, dan sumber yang tidak membahas karakternya disaring. Daftar sumber hanya tampil di tempat peninjauan dalam keadaan terlipat.
+- **Arsip Baca-Saja**: bila pembuat menghapus karakternya, percakapan yang sudah ada tetap bisa dibaca lewat snapshot karakter, tetapi pesan baru ditolak.
+
+### Percakapan
+
+- **Streaming balasan** dengan tombol berhenti, serta swipe dan regenerate untuk mencari varian jawaban.
+- **Mundur (Rewind)**: kembali ke satu pesan lama, lalu hapus pesan itu beserta semua pesan sesudahnya. Ingatan yang bersumber dari pesan yang dihapus ikut dibuang, dan ringkasan yang cakupannya sudah tidak sahih disusun ulang. Seluruhnya berjalan dalam satu transaksi.
+- **Multi-Persona**, grup chat multi-karakter, lorebook berbasis kata kunci, memori jangka panjang, dan judul chat otomatis.
+- **Beranda Dua Wajah**: halaman perkenalan untuk tamu, dashboard pribadi untuk yang sudah masuk. Dashboard memuat percakapan terakhir, koleksi karakter sendiri, dan bagian "Pernah Diajak Chat" untuk karakter publik orang lain.
+- **Dukungan Universal LLM**: OpenAI-compatible (OpenRouter, Groq, DeepSeek, 9Router, Ollama, dan lainnya) serta Google AI Studio, dengan model riset terpisah opsional.
 - **Ekspor Data**: setiap pengguna bisa mengunduh seluruh datanya dalam format JSON.
+- **Tema Terang dan Gelap**: dipilih di Pengaturan, tab Preferensi Chat, dan berlaku per perangkat.
 
 ---
 
@@ -22,17 +38,22 @@ Platform percakapan dan roleplay karakter AI multi-pengguna berbasis **Next.js 1
 
 ```
 naravia/
-├── public/uploads/        # File avatar karakter dan persona
+├── public/
+│   ├── landing/           # Foto suasana untuk halaman perkenalan
+│   └── uploads/           # File avatar karakter dan persona
 ├── scripts/               # CLI: create-admin.mjs, migrate-sqlite-to-postgres.mjs
 ├── src/
 │   ├── app/
-│   │   ├── api/           # Endpoint backend (auth, admin, characters, chats, messages, dll.)
+│   │   ├── api/           # Endpoint backend (auth, admin, characters, chats, messages, health, dll.)
 │   │   ├── admin/         # Panel Admin (khusus peran admin)
 │   │   ├── login/, register/
+│   │   ├── jelajah/       # Katalog karakter publik
 │   │   ├── characters/, chat/[id]/, groups/, worlds/, settings/
+│   │   ├── uploads/       # Route penyaji berkas dengan otorisasi per berkas
+│   │   └── fonts/         # Font yang di-host sendiri (tanpa permintaan ke Google Fonts)
 │   ├── components/        # Komponen UI (Navbar, AuthForm, AccountPanel, admin/*, dll.)
 │   ├── lib/               # db (pool PostgreSQL), schema.mjs, auth, store, llm, rateLimit, dll.
-│   └── middleware.ts      # Pengalihan halaman tanpa sesi ke /login
+│   └── middleware.ts      # Gerbang kasar: pengalihan halaman tanpa sesi ke /login
 ├── Dockerfile
 ├── docker-compose.yml     # Service db (PostgreSQL 16) + naravia
 └── PANDUAN_DEPLOY_PROXMOX.md
@@ -56,11 +77,21 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
-Buka `http://localhost:3000`. Tabel database dibuat otomatis saat koneksi pertama. **Akun pertama yang mendaftar otomatis menjadi admin.** Admin juga bisa dibuat lewat `ADMIN_EMAIL` + `ADMIN_PASSWORD` di `.env.local`, atau lewat CLI:
+Buka `http://localhost:3000`. Tabel database dibuat otomatis saat koneksi pertama. **Akun pertama yang mendaftar otomatis menjadi admin.** Admin juga bisa dibuat lewat `ADMIN_EMAIL` dan `ADMIN_PASSWORD` di `.env.local`, atau lewat CLI:
 
 ```bash
 node --env-file=.env.local scripts/create-admin.mjs --email admin@contoh.com --name "Admin"
 ```
+
+Perintah lain yang tersedia:
+
+```bash
+npm run typecheck   # Pemeriksaan tipe TypeScript
+npm run build       # Build produksi
+npm run start       # Jalankan hasil build
+```
+
+> Catatan: nilai environment hanya dibaca saat server start. Setelah mengubah `.env.local`, jalankan ulang `npm run dev`.
 
 ---
 
@@ -88,7 +119,7 @@ cp .env.local.example .env
 docker compose up -d --build
 ```
 
-Compose menjalankan dua service: `db` (PostgreSQL 16, volume `naravia-pgdata`, port tidak dibuka ke luar) dan `naravia` (aplikasi di port 3000). Unggahan avatar disimpan di `./public/uploads`.
+Compose menjalankan dua service: `db` (PostgreSQL 16, volume `naravia-pgdata`, port tidak dibuka ke luar) dan `naravia` (aplikasi di port 3000). Unggahan avatar disimpan di `./public/uploads`. Healthcheck container memakai endpoint `/api/health`, yang hanya memeriksa koneksi database dan tidak mengembalikan data apa pun.
 
 Migrasi data SQLite lama di dalam container:
 
@@ -108,7 +139,19 @@ Panduan Proxmox LXC dan Cloudflare Tunnel ada di [PANDUAN_DEPLOY_PROXMOX.md](./P
 
 ## Catatan Keamanan Produksi
 
-- Selalu akses lewat **HTTPS** (misalnya Cloudflare Tunnel). Cookie sesi hanya dikirim lewat HTTPS saat `NODE_ENV=production`.
+- Selalu akses lewat **HTTPS** (misalnya Cloudflare Tunnel). Cookie sesi hanya dikirim lewat HTTPS saat `NODE_ENV=production`. Isi `COOKIE_SECURE=false` hanya bila produksi memang diakses lewat HTTP di jaringan lokal.
 - Tutup pendaftaran (`REGISTRATION_MODE=closed` atau dari Panel Admin) jika aplikasi hanya untuk orang tertentu, agar kuota API provider tidak dipakai orang asing.
 - Kosongkan kembali `ADMIN_PASSWORD` di file environment setelah akun admin dibuat.
 - Pembatas laju disimpan di memori, cukup untuk satu instance server. Untuk banyak instance, pindahkan ke Redis.
+- Jalankan server dari dalam direktori proyek. Penyaji dan pembersih berkas unggahan memakai direktori kerja proses, sehingga menjalankannya dari tempat lain membuat avatar dicari di lokasi yang salah.
+- Pastikan `DATABASE_URL` menunjuk ke database yang benar sebelum memakai pembersih aset di Panel Admin. Pembersih menghapus berdasarkan catatan di tabel `uploads`, jadi menunjuk ke database kosong berarti tidak ada berkas yang dianggap terpakai.
+
+---
+
+## Cadangan Data
+
+Tiga hal yang perlu dicadangkan terpisah:
+
+1. **Database**: `pg_dump` seperti contoh di atas.
+2. **Berkas unggahan**: direktori `public/uploads`.
+3. **Data per pengguna**: ekspor JSON dari halaman Pengaturan, tab Data.
