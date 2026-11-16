@@ -12,6 +12,7 @@ import {
   UserPersonaRow,
   WorldRow,
 } from './db';
+import { parseJsonSafe } from './format';
 import { HttpError } from './http';
 import { newId } from './ids';
 import { SYSTEM_SETTING_KEYS, USER_SETTING_DEFAULTS } from './settingsKeys';
@@ -194,6 +195,87 @@ export async function requireOwnedChat(userId: string, id: string, client?: Pool
   const row = await queryOne<ChatRow>('SELECT * FROM chats WHERE id = $1 AND user_id = $2', [id, userId], client);
   if (!row) throw new HttpError(404, 'Percakapan tidak ditemukan.');
   return row;
+}
+
+// ===================== Karakter Publik =====================
+
+export type VisibleCharacter = CharacterRow & {
+  creator_name: string;
+  world_name: string | null;
+  is_owner: boolean;
+};
+
+/**
+ * Mengambil karakter yang boleh dilihat pemanggil: miliknya sendiri, atau milik
+ * siapa pun yang visibilitasnya 'public'. userId null berarti tamu tanpa akun.
+ * Karakter privat milik orang lain tetap diperlakukan sebagai tidak ada (404).
+ */
+export async function getVisibleCharacter(
+  userId: string | null,
+  id: string,
+  client?: PoolClient
+): Promise<VisibleCharacter | null> {
+  const row = await queryOne<CharacterRow & { creator_name: string; world_name: string | null }>(
+    `SELECT c.*, u.display_name AS creator_name, w.name AS world_name
+     FROM characters c
+     JOIN users u ON u.id = c.user_id
+     LEFT JOIN worlds w ON w.id = c.world_id
+     WHERE c.id = $1 AND (c.visibility = 'public' OR c.user_id = $2)`,
+    [id, userId],
+    client
+  );
+  if (!row) return null;
+  return { ...row, is_owner: Boolean(userId) && row.user_id === userId };
+}
+
+export async function requireVisibleCharacter(
+  userId: string | null,
+  id: string,
+  client?: PoolClient
+): Promise<VisibleCharacter> {
+  const row = await getVisibleCharacter(userId, id, client);
+  if (!row) throw new HttpError(404, 'Karakter tidak ditemukan.');
+  return row;
+}
+
+/**
+ * Definisi karakter yang dipakai sebuah percakapan. Snapshot dibuat saat percakapan
+ * dimulai, jadi suntingan pemilik setelahnya tidak mengubah percakapan yang sudah
+ * berjalan, dan percakapan tetap bisa dibaca walau karakter aslinya sudah dihapus.
+ */
+export async function resolveChatCharacter(
+  chat: ChatRow,
+  client?: PoolClient
+): Promise<{ character: CharacterRow; isDeleted: boolean }> {
+  const snapshot = chat.character_snapshot
+    ? parseJsonSafe<CharacterRow | null>(chat.character_snapshot, null)
+    : null;
+
+  if (snapshot?.id) {
+    // Karakter dianggap terhapus hanya jika tautannya sudah lepas
+    return { character: snapshot, isDeleted: !chat.character_id };
+  }
+
+  // Percakapan lama (sebelum fitur snapshot) masih memakai definisi terbaru
+  if (chat.character_id) {
+    const live = await queryOne<CharacterRow>('SELECT * FROM characters WHERE id = $1', [chat.character_id], client);
+    if (live) return { character: live, isDeleted: false };
+  }
+
+  throw new HttpError(410, 'Karakter percakapan ini sudah dihapus, jadi pesan baru tidak bisa dikirim.');
+}
+
+/**
+ * Dipakai jalur yang MENGHASILKAN pesan baru (kirim, regenerate, swipe).
+ * Berbeda dengan resolveChatCharacter yang hanya membaca: begitu karakternya
+ * dihapus, percakapan menjadi arsip baca-saja dan permintaan ditolak 410.
+ */
+export async function requireLiveChatCharacter(chat: ChatRow, client?: PoolClient): Promise<CharacterRow> {
+  const { character, isDeleted } = await resolveChatCharacter(chat, client);
+  if (isDeleted) {
+    throw new HttpError(410, 'Karakter percakapan ini sudah dihapus, jadi pesan baru tidak bisa dikirim.');
+  }
+  return character;
 }
 
 export async function requireOwnedMessage(userId: string, id: string, client?: PoolClient) {

@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { assertAvatarOwnership, deleteUploadAsset } from '@/lib/assets';
-import { requireUser } from '@/lib/auth';
+import { getSessionUser, requireUser } from '@/lib/auth';
 import {
   normalizeExampleDialogues,
   normalizeGreetings,
   normalizeResearchNotes,
   normalizeTags,
   normalizeTemperature,
+  normalizeVisibility,
 } from '@/lib/characterInput';
 import { CharacterRow, execute, query, queryOne } from '@/lib/db';
 import { formatCharacterRow, stripOwner } from '@/lib/format';
 import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
-import { requireOwnedCharacter, resolveOwnedWorldId } from '@/lib/store';
+import { requireOwnedCharacter, requireVisibleCharacter, resolveOwnedWorldId } from '@/lib/store';
 
 export const runtime = 'nodejs';
 
@@ -20,39 +21,52 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, context: Ctx) {
   try {
-    const user = await requireUser(req);
+    // Profil karakter publik boleh dibuka tamu, jadi sesi bersifat opsional di sini
+    const user = await getSessionUser(req);
     const { id } = await context.params;
 
-    const row = await queryOne<CharacterRow & { chat_count: number; last_chat_at: string | null; world_name: string | null }>(
-      `SELECT c.*, w.name AS world_name, COUNT(ch.id) AS chat_count, MAX(ch.updated_at) AS last_chat_at
-       FROM characters c
-       LEFT JOIN worlds w ON c.world_id = w.id
-       LEFT JOIN chats ch ON ch.character_id = c.id
-       WHERE c.id = $1 AND c.user_id = $2
-       GROUP BY c.id, w.name`,
-      [id, user.id]
-    );
-    if (!row) return jsonError('Karakter tidak ditemukan.', 404);
+    const character = await requireVisibleCharacter(user?.id || null, id);
 
-    const chats = await query(
-      `SELECT ch.*, COUNT(m.id) AS message_count
-       FROM chats ch
-       LEFT JOIN messages m ON m.chat_id = ch.id
-       WHERE ch.character_id = $1 AND ch.user_id = $2
-       GROUP BY ch.id
-       ORDER BY ch.updated_at DESC`,
-      [id, user.id]
-    );
+    // Jumlah percakapan yang ditampilkan hanya milik pemanggil sendiri
+    const stats = user
+      ? await queryOne<{ chat_count: number; last_chat_at: string | null }>(
+          `SELECT COUNT(*) AS chat_count, MAX(updated_at) AS last_chat_at
+           FROM chats WHERE character_id = $1 AND user_id = $2`,
+          [id, user.id]
+        )
+      : null;
 
-    const memories = await query(
-      `SELECT * FROM memories
-       WHERE user_id = $2 AND (character_id = $1 OR character_id IS NULL)
-       ORDER BY created_at DESC`,
-      [id, user.id]
-    );
+    const enriched = {
+      ...character,
+      chat_count: Number(stats?.chat_count || 0),
+      last_chat_at: stats?.last_chat_at || null,
+    };
+
+    // Riwayat percakapan dan memori bersifat pribadi, bahkan pada karakter publik
+    const chats = user
+      ? await query(
+          `SELECT ch.*, COUNT(m.id) AS message_count
+           FROM chats ch
+           LEFT JOIN messages m ON m.chat_id = ch.id
+           WHERE ch.character_id = $1 AND ch.user_id = $2
+           GROUP BY ch.id
+           ORDER BY ch.updated_at DESC`,
+          [id, user.id]
+        )
+      : [];
+
+    const memories =
+      user && character.is_owner
+        ? await query(
+            `SELECT * FROM memories
+             WHERE user_id = $2 AND (character_id = $1 OR character_id IS NULL)
+             ORDER BY created_at DESC`,
+            [id, user.id]
+          )
+        : [];
 
     return NextResponse.json({
-      character: formatCharacterRow(row),
+      character: formatCharacterRow(enriched),
       chats: chats.map(stripOwner),
       memories: memories.map(stripOwner),
     });
@@ -104,12 +118,21 @@ export async function PUT(req: NextRequest, context: Ctx) {
     const newAvatar = body.avatar !== undefined ? await assertAvatarOwnership(body.avatar, user.id) : existing.avatar;
     const worldId = body.world_id !== undefined ? await resolveOwnedWorldId(user.id, body.world_id) : existing.world_id;
 
+    const visibility =
+      body.visibility !== undefined ? normalizeVisibility(body.visibility) : existing.visibility;
+
     const updated = await queryOne<CharacterRow>(
       `UPDATE characters SET
          name = $1, tagline = $2, avatar = $3, description = $4, personality = $5,
          speaking_style = $6, scenario = $7, greeting = $8, example_dialogues = $9, tags = $10,
          research_notes = $11, world_id = $12, is_pinned = $13, is_favorite = $14,
-         temperature_override = $15, updated_at = now()
+         temperature_override = $15, visibility = $18,
+         -- Waktu terbit hanya dicatat sekali, saat karakter pertama kali dibuat publik
+         published_at = CASE
+           WHEN $18 = 'public' THEN COALESCE(published_at, now())
+           ELSE NULL
+         END,
+         updated_at = now()
        WHERE id = $16 AND user_id = $17
        RETURNING *`,
       [
@@ -132,6 +155,7 @@ export async function PUT(req: NextRequest, context: Ctx) {
           : existing.temperature_override,
         id,
         user.id,
+        visibility,
       ]
     );
 

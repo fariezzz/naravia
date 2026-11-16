@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Compass, Users, Globe, Settings, Plus, Menu, X, Sun, Moon, ShieldCheck, LogOut } from 'lucide-react';
+import { Compass, Users, Globe, Globe2, Settings, Plus, Menu, X, Sun, Moon, ShieldCheck, LogOut } from 'lucide-react';
 import CharacterAvatar from './CharacterAvatar';
 import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/lib/AuthContext';
@@ -13,7 +13,7 @@ const AUTH_PAGES = ['/login', '/register'];
 export default function Navbar() {
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
-  const { user, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -38,7 +38,8 @@ export default function Navbar() {
   const isAdmin = user?.role === 'admin';
 
   const navItems = [
-    { href: '/', label: 'Karakter', icon: Compass, match: (p: string) => p === '/' || p.startsWith('/characters') || p.startsWith('/chat/') },
+    { href: '/', label: 'Beranda', icon: Compass, match: (p: string) => p === '/' || p.startsWith('/characters') || p.startsWith('/chat/') },
+    { href: '/jelajah', label: 'Jelajah', icon: Globe2, match: (p: string) => p.startsWith('/jelajah') },
     { href: '/groups', label: 'Grup Chat', icon: Users, match: (p: string) => p.startsWith('/groups') },
     { href: '/worlds', label: 'Dunia & Lore', icon: Globe, match: (p: string) => p.startsWith('/worlds') },
     { href: '/settings', label: 'Pengaturan', icon: Settings, match: (p: string) => p.startsWith('/settings') },
@@ -63,13 +64,38 @@ export default function Navbar() {
     </button>
   );
 
-  // Halaman masuk/daftar hanya menampilkan logo dan pengalih tema
-  if (isAuthPage) {
+  // Halaman masuk/daftar memakai tata letak panel penuh dengan tautan kembali sendiri
+  if (isAuthPage) return null;
+
+  // Tamu di halaman perkenalan: hanya logo, pengalih tema, dan tautan autentikasi
+  if (!loading && !user) {
     return (
-      <header className="sticky top-0 z-20 w-full bg-white/95 dark:bg-[#0c1220]/95 backdrop-blur border-b border-slate-200 dark:border-slate-800 h-[54px] md:h-[64px] shrink-0">
-        <div className="max-w-6xl mx-auto h-full px-3.5 sm:px-4 flex items-center justify-between">
-          <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">Naravia</span>
-          {themeButton(false)}
+      <header className="sticky top-0 z-20 w-full bg-white/85 dark:bg-[#0c1220]/85 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 h-[58px] md:h-[68px] shrink-0">
+        <div className="max-w-6xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between">
+          <Link href="/" className="font-display text-xl md:text-[1.4rem] text-slate-900 dark:text-white">
+            Naravia
+          </Link>
+          <div className="flex items-center gap-2 sm:gap-2.5">
+            <Link
+              href="/jelajah"
+              className="h-9 px-3.5 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center transition-colors"
+            >
+              Jelajah
+            </Link>
+            {themeButton(false)}
+            <Link
+              href="/login"
+              className="h-9 px-3.5 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center transition-colors"
+            >
+              Masuk
+            </Link>
+            <Link
+              href="/register"
+              className="h-9 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 text-sm font-semibold inline-flex items-center whitespace-nowrap transition-colors"
+            >
+              Daftar
+            </Link>
+          </div>
         </div>
       </header>
     );
@@ -85,7 +111,7 @@ export default function Navbar() {
         <div className="flex items-center gap-6">
           <Link
             href="/"
-            className="text-lg font-bold tracking-tight text-slate-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors whitespace-nowrap"
+            className="font-display text-xl text-slate-900 dark:text-white hover:text-slate-600 dark:hover:text-slate-300 transition-colors whitespace-nowrap"
           >
             Naravia
           </Link>

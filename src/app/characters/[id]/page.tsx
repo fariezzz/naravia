@@ -11,6 +11,9 @@ import {
   Trash2,
   Download,
   Globe,
+  Globe2,
+  Lock,
+  UserCircle2,
   Bookmark,
   Plus,
   ChevronRight,
@@ -18,11 +21,13 @@ import {
 import CharacterAvatar from '@/components/CharacterAvatar';
 import CharacterForm from '@/components/CharacterForm';
 import ConfirmModal from '@/components/ConfirmModal';
+import { useAuth } from '@/lib/AuthContext';
 import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
 
 export default function CharacterProfilePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const characterId = params.id;
 
   const [character, setCharacter] = useState<any>(() => {
@@ -85,6 +90,11 @@ export default function CharacterProfilePage() {
 
   const handleStartNewChat = async () => {
     if (!character) return;
+    // Tamu tanpa akun diarahkan ke login dulu, lalu dikembalikan ke profil ini
+    if (!authLoading && !user) {
+      router.push(`/login?next=${encodeURIComponent(`/characters/${characterId}`)}`);
+      return;
+    }
     setActionLoading(true);
     setError('');
     try {
@@ -327,29 +337,60 @@ export default function CharacterProfilePage() {
                 <span className="px-2.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-xs font-medium">
                   {chats.length} Ruang Chat
                 </span>
+                {/* Visibilitas hanya relevan bagi pemiliknya */}
+                {character.is_owner && (
+                  <span
+                    className={`px-2.5 py-0.5 rounded-md text-xs font-medium inline-flex items-center gap-1 border ${
+                      character.visibility === 'public'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    {character.visibility === 'public' ? <Globe2 className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                    <span>{character.visibility === 'public' ? 'Publik' : 'Pribadi'}</span>
+                  </span>
+                )}
               </div>
+
+              {/* Pembuat karakter: hanya nama tampilan, email tidak pernah diekspos */}
+              {character.creator_name && (
+                <p className="text-xs text-slate-500 pt-0.5 inline-flex items-center gap-1.5">
+                  <UserCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    Dibuat oleh{' '}
+                    <span className="font-semibold text-slate-700">
+                      {character.is_owner ? `${character.creator_name} (kamu)` : character.creator_name}
+                    </span>
+                  </span>
+                </p>
+              )}
             </div>
           </div>
 
           {/* Baris Aksi Satu Baris Rapi */}
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-start sm:justify-end shrink-0">
-            <button
-              type="button"
-              onClick={() => setIsEditing(true)}
-              className="h-9 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span>Edit</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleDuplicate}
-              disabled={actionLoading}
-              className="h-9 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>Duplikat</span>
-            </button>
+            {/* Edit, duplikat, dan hapus hanya untuk pemilik; API juga menolak non-pemilik */}
+            {character.is_owner && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(true)}
+                  className="h-9 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Edit</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDuplicate}
+                  disabled={actionLoading}
+                  className="h-9 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Duplikat</span>
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={handleExportJson}
@@ -358,14 +399,16 @@ export default function CharacterProfilePage() {
               <Download className="w-3.5 h-3.5" />
               <span>Ekspor JSON</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setDeleteCharModal(true)}
-              className="h-9 px-3 rounded-lg border border-rose-200 hover:bg-rose-50 text-xs font-medium text-rose-600 inline-flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Hapus</span>
-            </button>
+            {character.is_owner && (
+              <button
+                type="button"
+                onClick={() => setDeleteCharModal(true)}
+                className="h-9 px-3 rounded-lg border border-rose-200 hover:bg-rose-50 text-xs font-medium text-rose-600 inline-flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Hapus</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -456,12 +499,8 @@ export default function CharacterProfilePage() {
               <p className="text-xs text-slate-700 leading-relaxed">
                 {character.research_notes.summary}
               </p>
-              {character.research_notes.sources?.length > 0 && (
-                <div className="text-xs text-slate-500 pt-1">
-                  <span className="font-semibold text-slate-700">Sumber: </span>
-                  {character.research_notes.sources.join(' • ')}
-                </div>
-              )}
+              {/* Daftar sumber hanya ditampilkan di tempat peninjauan (hasil riset
+                  saat pembuatan dan form edit), bukan di pemakaian normal. */}
               {character.research_notes.revision_verification && (
                 <div
                   className={`mt-2 p-3 rounded-xl border text-xs space-y-1 ${
@@ -483,7 +522,8 @@ export default function CharacterProfilePage() {
             </div>
           )}
 
-          {/* Memori Jangka Panjang Karakter */}
+          {/* Memori Jangka Panjang Karakter: pribadi, hanya untuk pemilik */}
+          {character.is_owner && (
           <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-2xs">
             <div className="flex items-center justify-between">
               <div>
@@ -557,6 +597,7 @@ export default function CharacterProfilePage() {
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Kolom Kanan (1/3): Daftar Riwayat Ruang Chat */}

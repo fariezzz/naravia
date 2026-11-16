@@ -7,7 +7,7 @@ import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
 import { cleanCharacterOutput, generateLLMResponse } from '@/lib/llm';
 import { enforceLlmRateLimit } from '@/lib/rateLimit';
-import { requireOwnedCharacter, requireOwnedChat, requireOwnedMessage } from '@/lib/store';
+import { requireLiveChatCharacter, requireOwnedChat, requireOwnedMessage } from '@/lib/store';
 
 export const runtime = 'nodejs';
 
@@ -73,7 +73,9 @@ export async function POST(req: NextRequest) {
       if (msg.role !== 'character') return jsonError('Pesan karakter tidak ditemukan.', 404);
 
       const chat = await requireOwnedChat(user.id, msg.chat_id);
-      const character = await requireOwnedCharacter(user.id, chat.character_id);
+      // Memakai definisi karakter yang dibekukan saat percakapan dibuat;
+      // karakter yang sudah dihapus menolak pembuatan pesan baru (410)
+      const character = await requireLiveChatCharacter(chat);
       const allMsgs = await query<MessageRow>(
         'SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC',
         [chat.id]
@@ -132,7 +134,8 @@ export async function POST(req: NextRequest) {
     if (content.length > MAX_MESSAGE_LENGTH) return jsonError('Pesan terlalu panjang.', 400);
 
     const chat = await requireOwnedChat(user.id, chatId);
-    const character = await requireOwnedCharacter(user.id, chat.character_id);
+    // Karakter terhapus memicu 410 agar percakapan lama tetap bisa dibaca tanpa pesan baru
+    const character = await requireLiveChatCharacter(chat);
 
     let userMessageRow: MessageRow | null = null;
     if (content) {

@@ -11,7 +11,13 @@ export function parseJsonSafe<T>(val: string | null | undefined, fallback: T): T
 }
 
 export function formatCharacterRow(
-  row: CharacterRow & { chat_count?: number; last_chat_at?: string | null; world_name?: string | null }
+  row: CharacterRow & {
+    chat_count?: number;
+    last_chat_at?: string | null;
+    world_name?: string | null;
+    creator_name?: string;
+    is_owner?: boolean;
+  }
 ) {
   return {
     id: row.id,
@@ -36,6 +42,11 @@ export function formatCharacterRow(
     is_pinned: Boolean(row.is_pinned),
     is_favorite: Boolean(row.is_favorite),
     temperature_override: row.temperature_override,
+    visibility: row.visibility === 'public' ? 'public' : 'private',
+    published_at: row.published_at || null,
+    // Nama pembuat ditampilkan di profil karakter; email tidak pernah diekspos
+    creator_name: row.creator_name || '',
+    is_owner: Boolean(row.is_owner),
     chat_count: Number(row.chat_count || 0),
     last_chat_at: row.last_chat_at || null,
     created_at: row.created_at,

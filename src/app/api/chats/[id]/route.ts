@@ -12,6 +12,7 @@ import {
   getPersonaById,
   getUserSettings,
   requireOwnedChat,
+  resolveChatCharacter,
 } from '@/lib/store';
 
 export const runtime = 'nodejs';
@@ -24,14 +25,24 @@ export async function GET(req: NextRequest, context: Ctx) {
     const { id } = await context.params;
     const chat = await requireOwnedChat(user.id, id);
 
-    const character = await queryOne<CharacterRow & { world_name?: string | null }>(
-      `SELECT c.*, w.name AS world_name
-       FROM characters c
-       LEFT JOIN worlds w ON c.world_id = w.id
-       WHERE c.id = $1 AND c.user_id = $2`,
-      [chat.character_id, user.id]
-    );
-    if (!character) return jsonError('Karakter untuk percakapan ini tidak ditemukan.', 404);
+    // Definisi karakter diambil dari snapshot percakapan, bukan dari baris terbaru:
+    // percakapan tetap bisa dibuka walau karakternya publik milik orang lain,
+    // sudah disunting pemiliknya, atau sudah dihapus.
+    let character: CharacterRow & { world_name?: string | null };
+    let characterDeleted = false;
+    try {
+      const resolved = await resolveChatCharacter(chat);
+      character = resolved.character;
+      characterDeleted = resolved.isDeleted;
+    } catch {
+      return jsonError('Karakter untuk percakapan ini tidak ditemukan.', 404);
+    }
+
+    // Nama dunia hanya relevan bila karakternya masih ada
+    if (chat.character_id && character.world_id) {
+      const world = await queryOne<{ name: string }>('SELECT name FROM worlds WHERE id = $1', [character.world_id]);
+      character = { ...character, world_name: world?.name || null };
+    }
 
     const [rawMessages, memories, otherChats, personas, settings] = await Promise.all([
       query<MessageRow>('SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC', [id]),
@@ -64,6 +75,8 @@ export async function GET(req: NextRequest, context: Ctx) {
     return NextResponse.json({
       chat: resolvedChat,
       character: formatCharacterRow(character),
+      // Klien memakai ini untuk menonaktifkan kolom pesan pada percakapan yang karakternya sudah dihapus
+      characterDeleted,
       messages: rawMessages.map(formatMessageRow),
       memories: memories.map(stripOwner),
       otherChats,

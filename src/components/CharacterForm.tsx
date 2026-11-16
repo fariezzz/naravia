@@ -17,6 +17,7 @@ import {
 import CharacterAvatar from './CharacterAvatar';
 import ImageCropModal from './ImageCropModal';
 import FormattedMessage from './FormattedMessage';
+import ResearchSourceList from './ResearchSourceList';
 
 export interface CharacterFormValues {
   id?: string;
@@ -31,6 +32,7 @@ export interface CharacterFormValues {
   example_dialogues: Array<{ user: string; char: string }>;
   tags: string[];
   world_id: string | null;
+  visibility: 'private' | 'public';
   temperature_override: string;
   research_notes: {
     mode: string;
@@ -87,6 +89,8 @@ export default function CharacterForm({
         : [{ user: '', char: '' }],
     tags: initialValues?.tags || [],
     world_id: initialValues?.world_id || null,
+    // Karakter baru selalu privat sampai pemiliknya memilih menerbitkannya
+    visibility: initialValues?.visibility === 'public' ? 'public' : 'private',
     temperature_override:
       initialValues?.temperature_override !== undefined && initialValues?.temperature_override !== null
         ? String(initialValues.temperature_override)
@@ -655,12 +659,7 @@ export default function CharacterForm({
                 </span>
               </div>
               <p className="text-xs text-indigo-950 leading-relaxed">{form.research_notes.summary}</p>
-              {form.research_notes.sources?.length > 0 && (
-                <div className="text-[11px] text-indigo-800">
-                  <span className="font-semibold">Sumber: </span>
-                  {form.research_notes.sources.join(' | ')}
-                </div>
-              )}
+              <ResearchSourceList sources={form.research_notes.sources} tone="indigo" />
               {form.research_notes.uncertainFields?.length > 0 && (
                 <div className="text-[11px] text-amber-800 bg-amber-100/80 px-2.5 py-1.5 rounded-lg">
                   Periksa kembali field berikut karena dirangkum dari ingatan model: {form.research_notes.uncertainFields.join(', ')}
@@ -797,6 +796,48 @@ export default function CharacterForm({
                   ))}
                 </select>
               </div>
+            </div>
+
+            {/* Visibilitas: pemilik menentukan sendiri apakah karakter ini terbuka untuk publik */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">Visibilitas Karakter</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[
+                  {
+                    value: 'private' as const,
+                    label: 'Pribadi',
+                    desc: 'Hanya kamu yang bisa melihat dan memakai karakter ini.',
+                  },
+                  {
+                    value: 'public' as const,
+                    label: 'Publik',
+                    desc: 'Siapa pun bisa menemukan dan mengajaknya mengobrol. Namamu tampil sebagai pembuat.',
+                  },
+                ].map((opt) => {
+                  const active = form.visibility === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setForm((p) => ({ ...p, visibility: opt.value }))}
+                      aria-pressed={active}
+                      className={`text-left p-3 rounded-xl border transition-colors ${
+                        active
+                          ? 'border-slate-900 bg-slate-50 ring-1 ring-slate-900'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <span className="block text-xs font-semibold text-slate-900">{opt.label}</span>
+                      <span className="block mt-0.5 text-[11px] leading-relaxed text-slate-500">{opt.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {form.visibility === 'public' && (
+                <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                  Riwayat percakapan dan memorimu tetap pribadi. Yang dibagikan hanya profil karakternya.
+                </p>
+              )}
             </div>
 
             <div>

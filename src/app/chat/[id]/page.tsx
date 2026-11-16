@@ -81,6 +81,8 @@ export default function ChatRoomPage() {
     return !cached || !cached.chat;
   });
   const [sending, setSending] = useState(false);
+  // Karakter percakapan ini sudah dihapus pemiliknya; riwayat tetap bisa dibaca saja
+  const [characterDeleted, setCharacterDeleted] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -181,6 +183,8 @@ export default function ChatRoomPage() {
       }
       setChat(data.chat);
       setCharacter(data.character);
+      // Karakter sudah dihapus pemiliknya: riwayat tetap bisa dibaca, tapi pesan baru ditutup
+      setCharacterDeleted(Boolean(data.characterDeleted));
       setMessages(data.messages || []);
       setMemories(data.memories || []);
       setOtherChats(data.otherChats || []);
@@ -1057,10 +1061,19 @@ export default function ChatRoomPage() {
 
           {/* Input Kirim Pesan (Sticky & Fixed di Bagian Bawah) */}
           <div className="p-2.5 sm:p-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#0c1220]/90 backdrop-blur-xs pb-[max(0.625rem,env(safe-area-inset-bottom))] shrink-0 z-20 transition-colors">
+            {/* Karakter sudah dihapus pemiliknya: percakapan jadi arsip yang hanya bisa dibaca */}
+            {characterDeleted && (
+              <div className="mb-2.5 p-3 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/30 text-[11px] leading-relaxed text-amber-900 dark:text-amber-200">
+                Karakter ini sudah dihapus oleh pembuatnya. Riwayat percakapan masih bisa kamu baca, tetapi pesan
+                baru tidak bisa dikirim lagi.
+              </div>
+            )}
+
             <div className="flex items-center gap-2.5">
               <textarea
                 ref={textareaRef}
                 rows={1}
+                disabled={characterDeleted}
                 value={inputText}
                 onChange={(e) => {
                   setInputText(e.target.value);
@@ -1082,8 +1095,10 @@ export default function ChatRoomPage() {
                     }
                   }
                 }}
-                placeholder={`Kirim pesan ke ${character.name}...`}
-                className="flex-1 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] px-4 py-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 dark:focus:border-indigo-400 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs"
+                placeholder={
+                  characterDeleted ? 'Percakapan ini hanya bisa dibaca.' : `Kirim pesan ke ${character.name}...`
+                }
+                className="flex-1 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] px-4 py-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 dark:focus:border-indigo-400 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs disabled:bg-slate-100 dark:disabled:bg-slate-900 disabled:cursor-not-allowed"
               />
               {sending ? (
                 <button
@@ -1098,7 +1113,7 @@ export default function ChatRoomPage() {
               ) : (
                 <button
                   type="button"
-                  disabled={!inputText.trim() && messages.length === 0}
+                  disabled={characterDeleted || (!inputText.trim() && messages.length === 0)}
                   onClick={handleSendMessage}
                   className="h-[48px] w-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 dark:disabled:bg-slate-800 dark:disabled:text-slate-600 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
                   title={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}

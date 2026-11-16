@@ -1,5 +1,5 @@
 import { Pool, PoolClient, QueryResultRow, types } from 'pg';
-import { SCHEMA_SQL } from './schema.mjs';
+import { MIGRATIONS_SQL, SCHEMA_SQL } from './schema.mjs';
 import { systemDefaultsFromEnv } from './settingsKeys';
 import { insertUserRecords } from './userRecords';
 
@@ -41,6 +41,8 @@ export interface CharacterRow {
   is_pinned: number;
   is_favorite: number;
   temperature_override: number | null;
+  visibility: 'private' | 'public';
+  published_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -48,7 +50,10 @@ export interface CharacterRow {
 export interface ChatRow {
   id: string;
   user_id: string;
-  character_id: string;
+  // NULL bila karakternya sudah dihapus pemiliknya; riwayat tetap bisa dibaca
+  character_id: string | null;
+  // Definisi karakter saat percakapan dibuat (JSON CharacterRow tanpa user_id)
+  character_snapshot: string | null;
   title: string;
   summary: string;
   summarized_until_msg_id: string | null;
@@ -222,6 +227,8 @@ async function initializeDatabase(): Promise<void> {
     // Kunci advisory mencegah dua instance menjalankan migrasi skema bersamaan
     await client.query('SELECT pg_advisory_lock(7240311)');
     await client.query(SCHEMA_SQL);
+    // Menyesuaikan database yang tabelnya dibuat sebelum fitur baru ditambahkan
+    await client.query(MIGRATIONS_SQL);
 
     const defaults = systemDefaultsFromEnv();
     for (const [k, v] of Object.entries(defaults)) {

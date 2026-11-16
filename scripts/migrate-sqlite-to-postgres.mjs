@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
-import { SCHEMA_SQL } from '../src/lib/schema.mjs';
+import { MIGRATIONS_SQL, SCHEMA_SQL } from '../src/lib/schema.mjs';
 
 function parseArgs(argv) {
   const args = { sqlite: 'data/naravia.db', email: '', dryRun: false };
@@ -87,6 +87,7 @@ async function main() {
 
   try {
     await client.query(SCHEMA_SQL);
+    await client.query(MIGRATIONS_SQL);
     const target = await client.query('SELECT id, email, role FROM users WHERE email = $1', [args.email]);
     if (!target.rows[0]) {
       throw new Error(`Akun ${args.email} belum ada. Daftar lewat web atau jalankan scripts/create-admin.mjs dulu.`);

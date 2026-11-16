@@ -1,6 +1,11 @@
 import { getSystemSettings } from './store';
 import { generateLLMResponse } from './llm';
 import { sanitizeCharacterDraftFields } from './metaFilter';
+import {
+  bersihkanDaftarSumber,
+  saringHasilPencarian,
+  type HasilPencarian,
+} from './researchSources';
 
 // Aturan isi personalisasi yang wajib dipatuhi di setiap prompt riset/revisi.
 // Disertakan contoh salah/benar nyata dari kasus Kotohira Nagi agar model punya patokan konkret.
@@ -50,7 +55,9 @@ export interface GeneratedCharacterDraft {
  * Mencari referensi di web jika kunci API pencarian gratis (Tavily / Brave) tersedia.
  */
 // Penyedia pencarian adalah setelan global yang dikelola admin
-export async function performOptionalWebSearch(query: string): Promise<{ snippets: string; sources: string[] }> {
+export async function performOptionalWebSearch(
+  query: string
+): Promise<{ snippets: string; sources: string[]; rawResults: HasilPencarian[] }> {
   const settings = await getSystemSettings();
   const provider = (settings.search_provider || 'model').toLowerCase();
   const apiKey = (
@@ -61,7 +68,7 @@ export async function performOptionalWebSearch(query: string): Promise<{ snippet
   ).trim();
 
   if (provider === 'model' || !apiKey) {
-    return { snippets: '', sources: [] };
+    return { snippets: '', sources: [], rawResults: [] };
   }
 
   try {
@@ -78,12 +85,14 @@ export async function performOptionalWebSearch(query: string): Promise<{ snippet
       });
       if (res.ok) {
         const data = await res.json();
-        const results = Array.isArray(data.results) ? data.results : [];
-        const sources = results.map((r: { title?: string; url?: string }) => `${r.title || 'Sumber'}: ${r.url || ''}`).filter(Boolean);
+        const results: HasilPencarian[] = Array.isArray(data.results) ? data.results : [];
+        // Daftar sumber mentah tidak dipakai lagi untuk ditampilkan; penyaringan
+        // relevansi dilakukan pemanggil yang tahu nama karakternya
+        const sources = results.map((r) => `${r.title || 'Sumber'}: ${r.url || ''}`).filter(Boolean);
         const snippets = results
-          .map((r: { title?: string; content?: string; url?: string }) => `[${r.title}] (${r.url})\n${r.content}`)
+          .map((r) => `[${r.title}] (${r.url})\n${r.content}`)
           .join('\n\n');
-        return { snippets, sources };
+        return { snippets, sources, rawResults: results };
       }
     } else if (provider === 'brave' || process.env.BRAVE_SEARCH_API_KEY) {
       const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(
@@ -97,19 +106,19 @@ export async function performOptionalWebSearch(query: string): Promise<{ snippet
       });
       if (res.ok) {
         const data = await res.json();
-        const results = data?.web?.results || [];
-        const sources = results.map((r: { title?: string; url?: string }) => `${r.title || 'Sumber'}: ${r.url || ''}`).filter(Boolean);
+        const results: HasilPencarian[] = data?.web?.results || [];
+        const sources = results.map((r) => `${r.title || 'Sumber'}: ${r.url || ''}`).filter(Boolean);
         const snippets = results
-          .map((r: { title?: string; description?: string; url?: string }) => `[${r.title}] (${r.url})\n${r.description}`)
+          .map((r) => `[${r.title}] (${r.url})\n${r.description}`)
           .join('\n\n');
-        return { snippets, sources };
+        return { snippets, sources, rawResults: results };
       }
     }
   } catch {
     // Jika pencarian eksternal gagal, lanjutkan dengan pengetahuan model secara jujur
   }
 
-  return { snippets: '', sources: [] };
+  return { snippets: '', sources: [], rawResults: [] };
 }
 
 /**
@@ -132,12 +141,13 @@ export async function generateCharacterFromIdea(params: {
   }
 
   let webSearchContext = '';
-  let externalSources: string[] = [];
+  let externalResults: HasilPencarian[] = [];
 
   if (!manualText && params.characterTypeHint !== 'original') {
     const searchRes = await performOptionalWebSearch(idea);
     webSearchContext = searchRes.snippets;
-    externalSources = searchRes.sources;
+    // Hasil mentah disimpan dan disaring setelah nama karakter diketahui dari model
+    externalResults = searchRes.rawResults;
   }
 
   const systemInstruction = `Kamu adalah perancang karakter roleplay profesional untuk aplikasi Naravia.
@@ -218,8 +228,24 @@ Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika m
     ? 'existing'
     : 'original';
 
-  const rawSources = Array.isArray(parsed.research_notes?.sources) ? parsed.research_notes.sources : [];
-  const mergedSources = Array.from(new Set([...externalSources, ...rawSources])).filter(Boolean);
+  const namaKarakter = String(parsed.name || '').trim();
+
+  // Hasil pencarian web disaring terhadap nama karakter, lalu digabung dengan
+  // sumber yang disebut model. Sumber yang dibuang hanya dicatat di log server.
+  const { sumber: sumberWeb, dibuang } = saringHasilPencarian(externalResults, namaKarakter);
+  if (dibuang.length > 0) {
+    console.info(
+      `[riset] ${dibuang.length} sumber dibuang untuk "${namaKarakter}":`,
+      dibuang.map((d) => `${d.alasan}: ${d.url || d.judul}`)
+    );
+  }
+
+  const sumberModel = Array.isArray(parsed.research_notes?.sources) ? parsed.research_notes.sources : [];
+  const mergedSources = bersihkanDaftarSumber(
+    [...sumberWeb.map((s) => `${s.judul}: ${s.url}`), ...sumberModel],
+    namaKarakter
+  );
+
   if (mergedSources.length === 0) {
     mergedSources.push(
       mode === 'existing'
@@ -232,7 +258,7 @@ Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika m
 
   const uncertainFields: string[] = Array.isArray(parsed.research_notes?.uncertainFields)
     ? parsed.research_notes.uncertainFields.map(String)
-    : mode === 'existing' && externalSources.length === 0 && !manualText
+    : mode === 'existing' && sumberWeb.length === 0 && !manualText
     ? ['description', 'scenario']
     : [];
 
@@ -453,7 +479,14 @@ ${webSearchContext ? `REFERENSI TAMBAHAN DARI WEB:\n${webSearchContext.slice(0, 
     research_notes: {
       ...currentDraft.research_notes,
       summary: String(parsed.research_notes?.summary || currentDraft.research_notes?.summary || '').trim(),
-      sources: Array.isArray(parsed.research_notes?.sources) ? parsed.research_notes.sources : currentDraft.research_notes?.sources || [],
+      // Dibersihkan juga di jalur revisi supaya duplikat dan parameter pelacak
+      // tidak masuk lewat sumber baru yang disebut model
+      sources: bersihkanDaftarSumber(
+        Array.isArray(parsed.research_notes?.sources)
+          ? parsed.research_notes.sources
+          : currentDraft.research_notes?.sources || [],
+        String(parsed.name || currentDraft.name || '').trim()
+      ),
       uncertainFields: Array.isArray(parsed.research_notes?.uncertainFields) ? parsed.research_notes.uncertainFields : [],
       revision_feedback: revisionRequest,
       revision_verification: verification,

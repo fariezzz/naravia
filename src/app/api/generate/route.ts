@@ -54,6 +54,9 @@ export async function POST(req: NextRequest) {
         is_pinned: 0,
         is_favorite: 0,
         temperature_override: null,
+        // Draf pratinjau tidak pernah disimpan, jadi selalu dianggap privat
+        visibility: 'private',
+        published_at: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };

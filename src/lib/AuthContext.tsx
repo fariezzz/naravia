@@ -28,12 +28,19 @@ const AuthContext = createContext<AuthContextValue>({
 
 const PUBLIC_PATHS = ['/login', '/register'];
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
+export function AuthProvider({
+  children,
+  initialUser = null,
+}: {
+  children: React.ReactNode;
+  initialUser?: AuthUser | null;
+}) {
+  const [user, setUser] = useState<AuthUser | null>(initialUser);
+  const [loading, setLoading] = useState(!initialUser);
   const pathname = usePathname();
   const router = useRouter();
-  const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  // Beranda bersifat publik: tamu melihat halaman perkenalan, pengguna yang sudah masuk melihat dashboard
+  const isPublic = pathname === '/' || PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   const refresh = useCallback(async () => {
     try {
@@ -52,12 +59,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (isPublic) {
+    if (isPublic && !initialUser) {
       setLoading(false);
       return;
     }
     refresh();
-  }, [isPublic, refresh]);
+  }, [isPublic, initialUser, refresh]);
 
   // Sesi kedaluwarsa atau dicabut admin: arahkan kembali ke halaman masuk
   useEffect(() => {

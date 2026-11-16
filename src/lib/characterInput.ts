@@ -23,6 +23,12 @@ export function normalizeResearchNotes(raw: unknown): string {
   return String(raw || '');
 }
 
+// Hanya dua nilai yang diizinkan; input lain dianggap privat agar tidak ada
+// karakter yang tidak sengaja terbuka ke publik
+export function normalizeVisibility(raw: unknown): 'private' | 'public' {
+  return String(raw || '').trim().toLowerCase() === 'public' ? 'public' : 'private';
+}
+
 export function normalizeTemperature(raw: unknown): number | null {
   if (raw === undefined || raw === null || raw === '') return null;
   const n = Number(raw);

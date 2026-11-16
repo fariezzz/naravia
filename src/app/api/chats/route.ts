@@ -5,20 +5,23 @@ import { ChatRow, query, queryOne, withTransaction } from '@/lib/db';
 import { parseJsonSafe, stripOwner } from '@/lib/format';
 import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
-import { getDefaultPersona, getPersonaById, getUserSettings, requireOwnedCharacter } from '@/lib/store';
+import { getDefaultPersona, getPersonaById, getUserSettings, requireVisibleCharacter } from '@/lib/store';
 
 export const runtime = 'nodejs';
 
+// LEFT JOIN karena karakter bisa sudah dihapus pemiliknya; identitas karakter
+// lalu diambil dari snapshot agar riwayat percakapan tetap bisa dibuka.
 const CHAT_LIST_SQL = `
   SELECT
     ch.*,
-    c.name AS character_name,
-    c.avatar AS character_avatar,
-    c.tagline AS character_tagline,
+    COALESCE(c.name, ch.character_snapshot::json->>'name', 'Karakter Terhapus') AS character_name,
+    COALESCE(c.avatar, ch.character_snapshot::json->>'avatar', '') AS character_avatar,
+    COALESCE(c.tagline, ch.character_snapshot::json->>'tagline', '') AS character_tagline,
+    (c.id IS NULL) AS character_deleted,
     (SELECT COUNT(*) FROM messages m WHERE m.chat_id = ch.id) AS message_count,
     (SELECT content FROM messages m WHERE m.chat_id = ch.id ORDER BY created_at DESC LIMIT 1) AS last_message
   FROM chats ch
-  JOIN characters c ON ch.character_id = c.id
+  LEFT JOIN characters c ON ch.character_id = c.id
   WHERE ch.user_id = $1`;
 
 export async function GET(req: NextRequest) {
@@ -43,7 +46,8 @@ export async function POST(req: NextRequest) {
     const characterId = String(body.characterId || '').trim();
     if (!characterId) return jsonError('ID karakter wajib diisi.', 400);
 
-    const character = await requireOwnedCharacter(user.id, characterId);
+    // Karakter publik milik orang lain boleh dipakai; karakter privat orang lain tetap 404
+    const character = await requireVisibleCharacter(user.id, characterId);
     const persona = body.personaId
       ? await getPersonaById(user.id, String(body.personaId))
       : await getDefaultPersona(user.id);
@@ -73,12 +77,18 @@ export async function POST(req: NextRequest) {
     const chatId = newId('chat');
     const activeAltIndex = Math.max(0, formattedAlternates.indexOf(chosenGreeting));
 
+    // Definisi karakter dibekukan di sini. Suntingan pemilik setelah ini hanya
+    // berlaku untuk percakapan baru, dan percakapan ini tetap utuh walau
+    // karakter aslinya kemudian diubah atau dihapus.
+    const { creator_name: _nama, is_owner: _pemilik, ...snapshotFields } = character;
+    const characterSnapshot = JSON.stringify(stripOwner(snapshotFields));
+
     const chat = await withTransaction(async (client) => {
       const created = await queryOne<ChatRow>(
         `INSERT INTO chats (
-           id, user_id, character_id, title, summary, summarized_until_msg_id,
+           id, user_id, character_id, character_snapshot, title, summary, summarized_until_msg_id,
            temperature, max_tokens, reply_style, persona_id, persona_snapshot, use_latest_persona
-         ) VALUES ($1, $2, $3, $4, '', NULL, $5, $6, $7, $8, $9, 0)
+         ) VALUES ($1, $2, $3, $10, $4, '', NULL, $5, $6, $7, $8, $9, 0)
          RETURNING *`,
         [
           chatId,
@@ -90,6 +100,7 @@ export async function POST(req: NextRequest) {
           effectiveReplyStyle,
           persona?.id || null,
           persona ? JSON.stringify(stripOwner(persona)) : null,
+          characterSnapshot,
         ],
         client
       );

@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS characters (
   is_pinned INTEGER DEFAULT 0,
   is_favorite INTEGER DEFAULT 0,
   temperature_override DOUBLE PRECISION DEFAULT NULL,
+  -- 'private' hanya pemilik, 'public' bisa dilihat siapa pun termasuk tamu
+  visibility TEXT NOT NULL DEFAULT 'private',
+  published_at TIMESTAMPTZ DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -98,7 +101,12 @@ CREATE TABLE IF NOT EXISTS user_personas (
 CREATE TABLE IF NOT EXISTS chats (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+  -- Dibiarkan NULL saat karakternya dihapus: riwayat percakapan tetap bisa dibaca,
+  -- tetapi tidak bisa menerima pesan baru lagi
+  character_id TEXT DEFAULT NULL REFERENCES characters(id) ON DELETE SET NULL,
+  -- Definisi karakter saat percakapan ini dibuat; suntingan pemilik setelahnya
+  -- tidak mengubah percakapan yang sudah berjalan
+  character_snapshot TEXT DEFAULT NULL,
   title TEXT NOT NULL,
   summary TEXT DEFAULT '',
   summarized_until_msg_id TEXT DEFAULT NULL,
@@ -210,4 +218,46 @@ CREATE INDEX IF NOT EXISTS idx_group_messages_chat ON group_messages(group_chat_
 CREATE INDEX IF NOT EXISTS idx_token_usage_user_created ON token_usage(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_uploads_user ON uploads(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
+`;
+
+// Migrasi untuk database yang tabelnya sudah ada sebelumnya.
+// CREATE TABLE IF NOT EXISTS tidak menambahkan kolom baru pada tabel lama, jadi
+// perubahan kolom harus dinyatakan terpisah. Seluruh pernyataan di sini wajib
+// idempoten karena dijalankan setiap kali aplikasi tersambung ke database.
+export const MIGRATIONS_SQL = `
+-- Visibilitas karakter (fitur karakter publik)
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ DEFAULT NULL;
+
+-- Definisi karakter dibekukan per percakapan
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS character_snapshot TEXT DEFAULT NULL;
+
+-- Riwayat percakapan harus tetap ada walau karakternya dihapus pemiliknya.
+-- Tabel lama memakai NOT NULL + ON DELETE CASCADE, jadi keduanya diubah.
+ALTER TABLE chats ALTER COLUMN character_id DROP NOT NULL;
+
+DO $$
+DECLARE
+  nama_constraint TEXT;
+BEGIN
+  SELECT con.conname INTO nama_constraint
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = con.conkey[1]
+  WHERE rel.relname = 'chats'
+    AND con.contype = 'f'
+    AND att.attname = 'character_id'
+    AND con.confdeltype <> 'n'
+  LIMIT 1;
+
+  IF nama_constraint IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE chats DROP CONSTRAINT %I', nama_constraint);
+    ALTER TABLE chats
+      ADD CONSTRAINT chats_character_id_fkey
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_characters_public
+  ON characters(published_at DESC) WHERE visibility = 'public';
 `;

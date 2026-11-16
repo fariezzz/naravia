@@ -7,7 +7,7 @@ import { handleApiError, jsonError, readJson, redactInternalDetails } from '@/li
 import { newId } from '@/lib/ids';
 import { cleanCharacterOutput, LLMMessage, streamLLMResponse } from '@/lib/llm';
 import { enforceLlmRateLimit } from '@/lib/rateLimit';
-import { assertTokenBudget, requireOwnedCharacter, requireOwnedChat, requireOwnedMessage } from '@/lib/store';
+import { assertTokenBudget, requireLiveChatCharacter, requireOwnedChat, requireOwnedMessage } from '@/lib/store';
 
 // Wajib dinamis agar Next.js tidak men-cache atau mem-buffer respons streaming SSE ini
 export const dynamic = 'force-dynamic';
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
       if (msg.role !== 'character') return jsonError('Pesan karakter tidak ditemukan.', 404);
 
       chat = await requireOwnedChat(user.id, msg.chat_id);
-      character = await requireOwnedCharacter(user.id, chat.character_id);
+      character = await requireLiveChatCharacter(chat);
 
       const allMsgs = await query<MessageRow>('SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC', [chat.id]);
       const msgIdx = allMsgs.findIndex((m) => m.id === msg.id);
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       if (userText.length > MAX_MESSAGE_LENGTH) return jsonError('Pesan terlalu panjang.', 400);
 
       chat = await requireOwnedChat(user.id, String(body.chatId || ''));
-      character = await requireOwnedCharacter(user.id, chat.character_id);
+      character = await requireLiveChatCharacter(chat);
 
       if (userText) {
         userMessageRow = await queryOne<MessageRow>(

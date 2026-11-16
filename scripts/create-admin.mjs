@@ -8,7 +8,7 @@
 import { randomBytes, scrypt } from 'node:crypto';
 import readline from 'node:readline';
 import pg from 'pg';
-import { SCHEMA_SQL } from '../src/lib/schema.mjs';
+import { MIGRATIONS_SQL, SCHEMA_SQL } from '../src/lib/schema.mjs';
 
 function parseArgs(argv) {
   const args = { email: '', name: 'Admin' };
@@ -63,6 +63,7 @@ async function main() {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
   try {
     await pool.query(SCHEMA_SQL);
+    await pool.query(MIGRATIONS_SQL);
     const existing = await pool.query('SELECT id, role FROM users WHERE email = $1', [email]);
 
     if (existing.rows[0]) {

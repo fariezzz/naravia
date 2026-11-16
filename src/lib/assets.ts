@@ -99,13 +99,23 @@ export async function cleanupOrphanedUploads(userId?: string): Promise<number> {
     );
     const activeSet = new Set(active.map((r) => r.avatar.trim()));
 
-    let candidates: string[];
-    if (userId) {
-      const owned = await query<{ filename: string }>('SELECT filename FROM uploads WHERE user_id = $1', [userId]);
-      candidates = owned.map((r) => r.filename);
-    } else {
-      candidates = fs.readdirSync(uploadsDir).filter((f) => !f.startsWith('.'));
-    }
+    // Hanya file yang TERCATAT di tabel uploads yang boleh dihapus. Memindai folder
+    // secara langsung berbahaya: bila database yang terhubung bukan database milik
+    // folder ini (salah DATABASE_URL, database baru, atau sesi pengujian), setiap
+    // file pengguna akan dianggap yatim dan terhapus.
+    const recorded = userId
+      ? await query<{ filename: string; created_at: string }>(
+          'SELECT filename, created_at FROM uploads WHERE user_id = $1',
+          [userId]
+        )
+      : await query<{ filename: string; created_at: string }>('SELECT filename, created_at FROM uploads');
+
+    // Masa tenggang: file yang baru diunggah bisa saja belum sempat dipasang ke
+    // entitas apa pun (pengguna masih mengisi form), jadi jangan langsung dihapus.
+    const GRACE_MS = 60 * 60 * 1000;
+    const candidates = recorded
+      .filter((r) => Date.now() - new Date(r.created_at).getTime() > GRACE_MS)
+      .map((r) => r.filename);
 
     for (const file of candidates) {
       if (activeSet.has(`/uploads/${file}`)) continue;
