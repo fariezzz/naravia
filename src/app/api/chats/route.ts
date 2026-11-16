@@ -1,154 +1,115 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth';
 import { replacePlaceholders } from '@/lib/character';
-import { CharacterRow, getDb, getDefaultPersona, getPersonaById, getSettingsMap } from '@/lib/db';
+import { ChatRow, query, queryOne, withTransaction } from '@/lib/db';
+import { parseJsonSafe, stripOwner } from '@/lib/format';
+import { handleApiError, jsonError, readJson } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { getDefaultPersona, getPersonaById, getUserSettings, requireOwnedCharacter } from '@/lib/store';
+
+export const runtime = 'nodejs';
+
+const CHAT_LIST_SQL = `
+  SELECT
+    ch.*,
+    c.name AS character_name,
+    c.avatar AS character_avatar,
+    c.tagline AS character_tagline,
+    (SELECT COUNT(*) FROM messages m WHERE m.chat_id = ch.id) AS message_count,
+    (SELECT content FROM messages m WHERE m.chat_id = ch.id ORDER BY created_at DESC LIMIT 1) AS last_message
+  FROM chats ch
+  JOIN characters c ON ch.character_id = c.id
+  WHERE ch.user_id = $1`;
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const characterId = searchParams.get('characterId');
-    const db = getDb();
+    const user = await requireUser(req);
+    const characterId = new URL(req.url).searchParams.get('characterId');
 
-    if (characterId) {
-      const chats = db
-        .prepare(`
-          SELECT
-            ch.*,
-            c.name as character_name,
-            c.avatar as character_avatar,
-            c.tagline as character_tagline,
-            COUNT(m.id) as message_count,
-            (SELECT content FROM messages WHERE chat_id = ch.id ORDER BY created_at DESC LIMIT 1) as last_message
-          FROM chats ch
-          JOIN characters c ON ch.character_id = c.id
-          LEFT JOIN messages m ON m.chat_id = ch.id
-          WHERE ch.character_id = ?
-          GROUP BY ch.id
-          ORDER BY ch.updated_at DESC
-        `)
-        .all(characterId);
-      return NextResponse.json({ chats });
-    }
+    const chats = characterId
+      ? await query(`${CHAT_LIST_SQL} AND ch.character_id = $2 ORDER BY ch.updated_at DESC`, [user.id, characterId])
+      : await query(`${CHAT_LIST_SQL} ORDER BY ch.updated_at DESC`, [user.id]);
 
-    const chats = db
-      .prepare(`
-        SELECT
-          ch.*,
-          c.name as character_name,
-          c.avatar as character_avatar,
-          c.tagline as character_tagline,
-          COUNT(m.id) as message_count,
-          (SELECT content FROM messages WHERE chat_id = ch.id ORDER BY created_at DESC LIMIT 1) as last_message
-        FROM chats ch
-        JOIN characters c ON ch.character_id = c.id
-        LEFT JOIN messages m ON m.chat_id = ch.id
-        GROUP BY ch.id
-        ORDER BY ch.updated_at DESC
-      `)
-      .all();
-
-    return NextResponse.json({ chats });
+    return NextResponse.json({ chats: chats.map(stripOwner) });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memuat daftar percakapan.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memuat daftar percakapan.');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const user = await requireUser(req);
+    const body = await readJson(req);
     const characterId = String(body.characterId || '').trim();
-    if (!characterId) {
-      return NextResponse.json({ error: 'ID karakter wajib diisi.' }, { status: 400 });
-    }
+    if (!characterId) return jsonError('ID karakter wajib diisi.', 400);
 
-    const db = getDb();
-    const character = (db
-      .prepare('SELECT * FROM characters WHERE id = ?')
-      .get(characterId) as unknown) as CharacterRow | undefined;
-
-    if (!character) {
-      return NextResponse.json({ error: 'Karakter tidak ditemukan.' }, { status: 404 });
-    }
-
+    const character = await requireOwnedCharacter(user.id, characterId);
     const persona = body.personaId
-      ? getPersonaById(String(body.personaId))
-      : getDefaultPersona();
+      ? await getPersonaById(user.id, String(body.personaId))
+      : await getDefaultPersona(user.id);
 
     const userName = persona?.display_name || 'Kamu';
-    const now = new Date().toISOString();
-    const chatId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-    let greetings: string[] = [];
-    try {
-      greetings = JSON.parse(character.greeting || '[]');
-    } catch {
-      greetings = [];
-    }
-
+    const greetings = parseJsonSafe<string[]>(character.greeting, []);
     const greetingIndex = Number(body.greetingIndex || 0);
     const chosenGreetingRaw =
-      greetings[greetingIndex] ||
-      greetings[0] ||
-      `Halo ${userName}, senang akhirnya kita bisa mengobrol.`;
+      greetings[greetingIndex] || greetings[0] || `Halo ${userName}, senang akhirnya kita bisa mengobrol.`;
 
     const chosenGreeting = replacePlaceholders(chosenGreetingRaw, character.name, userName);
     const formattedAlternates = greetings.map((g) => replacePlaceholders(g, character.name, userName));
+    const title = String(body.title || '').trim().slice(0, 120) || `Percakapan dengan ${character.name}`;
 
-    const title = String(body.title || '').trim() || `Percakapan dengan ${character.name}`;
-
-    const settings = getSettingsMap();
+    const settings = await getUserSettings(user.id);
     const effectiveTemp =
       character.temperature_override ??
       (body.temperature !== undefined && body.temperature !== null && body.temperature !== ''
         ? Number(body.temperature)
         : parseFloat(settings.temperature || '0.9') || 0.9);
-
     const effectiveMaxTokens =
       body.maxTokens !== undefined && body.maxTokens !== null && body.maxTokens !== ''
         ? Number(body.maxTokens)
         : parseInt(settings.max_tokens || '1024', 10) || 1024;
+    const effectiveReplyStyle = String(body.replyStyle || settings.default_reply_style || 'sedang');
 
-    const effectiveReplyStyle = body.replyStyle || settings.default_reply_style || 'sedang';
+    const chatId = newId('chat');
+    const activeAltIndex = Math.max(0, formattedAlternates.indexOf(chosenGreeting));
 
-    db.prepare(`
-      INSERT INTO chats (
-        id, character_id, title, summary, summarized_until_msg_id,
-        temperature, max_tokens, reply_style, persona_id, persona_snapshot, use_latest_persona,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, '', NULL, ?, ?, ?, ?, ?, 0, ?, ?)
-    `).run(
-      chatId,
-      characterId,
-      title,
-      effectiveTemp,
-      effectiveMaxTokens,
-      effectiveReplyStyle,
-      persona?.id || null,
-      persona ? JSON.stringify(persona) : null,
-      now,
-      now
-    );
+    const chat = await withTransaction(async (client) => {
+      const created = await queryOne<ChatRow>(
+        `INSERT INTO chats (
+           id, user_id, character_id, title, summary, summarized_until_msg_id,
+           temperature, max_tokens, reply_style, persona_id, persona_snapshot, use_latest_persona
+         ) VALUES ($1, $2, $3, $4, '', NULL, $5, $6, $7, $8, $9, 0)
+         RETURNING *`,
+        [
+          chatId,
+          user.id,
+          characterId,
+          title,
+          effectiveTemp,
+          effectiveMaxTokens,
+          effectiveReplyStyle,
+          persona?.id || null,
+          persona ? JSON.stringify(stripOwner(persona)) : null,
+        ],
+        client
+      );
 
-    const firstMsgId = `msg-${Date.now()}-init`;
-    const activeAltIndex = formattedAlternates.indexOf(chosenGreeting) >= 0 ? formattedAlternates.indexOf(chosenGreeting) : 0;
+      await client.query(
+        `INSERT INTO messages (id, chat_id, role, content, alternatives, active_alt_index, is_pinned_memory)
+         VALUES ($1, $2, 'character', $3, $4, $5, 0)`,
+        [
+          newId('msg'),
+          chatId,
+          chosenGreeting,
+          JSON.stringify(formattedAlternates.length > 0 ? formattedAlternates : [chosenGreeting]),
+          activeAltIndex,
+        ]
+      );
+      return created;
+    });
 
-    db.prepare(`
-      INSERT INTO messages (
-        id, chat_id, role, content, alternatives, active_alt_index, is_pinned_memory, created_at
-      ) VALUES (?, ?, 'character', ?, ?, ?, 0, ?)
-    `).run(
-      firstMsgId,
-      chatId,
-      chosenGreeting,
-      JSON.stringify(formattedAlternates.length > 0 ? formattedAlternates : [chosenGreeting]),
-      activeAltIndex,
-      now
-    );
-
-    const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
-    return NextResponse.json({ chat }, { status: 201 });
+    return NextResponse.json({ chat: stripOwner(chat!) }, { status: 201 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memulai percakapan baru.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memulai percakapan baru.');
   }
 }

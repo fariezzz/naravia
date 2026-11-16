@@ -1,272 +1,188 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  ensureMultiPersonaSchema,
-  getAllPersonas,
-  getDb,
-  getDefaultPersona,
-  getPersonaById,
-  invalidatePersonasCache,
-  UserPersonaRow,
-} from '@/lib/db';
-import { deleteUploadAsset, replaceUploadAsset } from '@/lib/assets';
+import { assertAvatarOwnership, deleteUploadAsset } from '@/lib/assets';
+import { requireUser } from '@/lib/auth';
+import { queryOne, UserPersonaRow, withTransaction } from '@/lib/db';
+import { stripOwner } from '@/lib/format';
+import { handleApiError, HttpError, jsonError, readJson } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { formatPersona, getAllPersonas, getDefaultPersona } from '@/lib/store';
 
-function syncDefaultToLegacyTable(persona: UserPersonaRow | null) {
-  if (!persona) return;
-  const db = getDb();
-  try {
-    db.prepare(`
-      INSERT INTO user_persona (id, display_name, avatar, description, likes, dislikes, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        display_name = excluded.display_name,
-        avatar = excluded.avatar,
-        description = excluded.description,
-        likes = excluded.likes,
-        dislikes = excluded.dislikes,
-        updated_at = excluded.updated_at
-    `).run(
-      persona.display_name,
-      persona.avatar || '',
-      persona.description || '',
-      persona.likes || '',
-      persona.dislikes || '',
-      persona.updated_at
-    );
-  } catch {
-    // Abaikan jika gagal sinkronisasi ke tabel lama
-  }
+export const runtime = 'nodejs';
+
+const MAX_PERSONAS_PER_USER = 30;
+
+async function requireOwnedPersona(userId: string, id: string) {
+  const row = await queryOne<UserPersonaRow>('SELECT * FROM user_personas WHERE id = $1 AND user_id = $2', [id, userId]);
+  if (!row) throw new HttpError(404, 'Persona tidak ditemukan.');
+  return row;
 }
 
-export async function GET() {
-  try {
-    ensureMultiPersonaSchema();
-    const personas = getAllPersonas().map((p) => ({
-      ...p,
-      is_default: Boolean(p.is_default),
-    }));
-    const defaultPersona = personas.find((p) => p.is_default) || personas[0] || null;
+async function listResponse(userId: string, persona: UserPersonaRow | null, status = 200) {
+  const personas = await getAllPersonas(userId);
+  return NextResponse.json(
+    { persona: formatPersona(persona), personas: personas.map(formatPersona) },
+    { status }
+  );
+}
 
-    return NextResponse.json({
-      persona: defaultPersona,
-      personas,
-    });
+function limitText(raw: unknown, max: number): string {
+  return String(raw || '').trim().slice(0, max);
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const user = await requireUser(req);
+    return listResponse(user.id, await getDefaultPersona(user.id));
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memuat daftar persona pengguna.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memuat daftar persona pengguna.');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    ensureMultiPersonaSchema();
-    const body = await req.json();
-    const displayName = String(body.display_name || '').trim();
-    if (!displayName) {
-      return NextResponse.json({ error: 'Nama panggilan persona wajib diisi.' }, { status: 400 });
+    const user = await requireUser(req);
+    const body = await readJson(req);
+    const displayName = limitText(body.display_name, 60);
+    if (!displayName) return jsonError('Nama panggilan persona wajib diisi.', 400);
+
+    const existing = await getAllPersonas(user.id);
+    if (existing.length >= MAX_PERSONAS_PER_USER) {
+      return jsonError(`Batas maksimal ${MAX_PERSONAS_PER_USER} persona per akun sudah tercapai.`, 400);
     }
 
-    const db = getDb();
-    const now = new Date().toISOString();
-    const id = `persona-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const isDefault = Boolean(body.is_default);
+    const isDefault = Boolean(body.is_default) || existing.length === 0;
+    const avatar = await assertAvatarOwnership(body.avatar, user.id);
+    const id = newId('persona');
 
-    if (isDefault) {
-      db.prepare('UPDATE user_personas SET is_default = 0').run();
-    }
+    const created = await withTransaction(async (client) => {
+      if (isDefault) {
+        await client.query('UPDATE user_personas SET is_default = 0 WHERE user_id = $1', [user.id]);
+      }
+      return queryOne<UserPersonaRow>(
+        `INSERT INTO user_personas (id, user_id, display_name, avatar, description, likes, dislikes, is_default)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [
+          id,
+          user.id,
+          displayName,
+          avatar,
+          limitText(body.description, 4000),
+          limitText(body.likes, 1000),
+          limitText(body.dislikes, 1000),
+          isDefault ? 1 : 0,
+        ],
+        client
+      );
+    });
 
-    db.prepare(`
-      INSERT INTO user_personas (id, display_name, avatar, description, likes, dislikes, is_default, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      displayName,
-      String(body.avatar || '').trim(),
-      String(body.description || '').trim(),
-      String(body.likes || '').trim(),
-      String(body.dislikes || '').trim(),
-      isDefault ? 1 : 0,
-      now,
-      now
-    );
-
-    invalidatePersonasCache();
-    const created = getPersonaById(id);
-    if (isDefault && created) {
-      syncDefaultToLegacyTable(created);
-    }
-
-    const personas = getAllPersonas().map((p) => ({
-      ...p,
-      is_default: Boolean(p.is_default),
-    }));
-
-    return NextResponse.json(
-      {
-        persona: created ? { ...created, is_default: Boolean(created.is_default) } : null,
-        personas,
-      },
-      { status: 201 }
-    );
+    return listResponse(user.id, created, 201);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal membuat persona baru.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal membuat persona baru.');
   }
 }
 
 export async function PUT(req: NextRequest) {
   try {
-    ensureMultiPersonaSchema();
-    const body = await req.json();
-    const db = getDb();
-    const now = new Date().toISOString();
+    const user = await requireUser(req);
+    const body = await readJson(req);
 
-    const targetId = body.id ? String(body.id) : getDefaultPersona()?.id || 'persona-default';
-    const existing = getPersonaById(targetId);
-    if (!existing) {
-      return NextResponse.json({ error: 'Persona tidak ditemukan.' }, { status: 404 });
-    }
+    const fallbackDefault = await getDefaultPersona(user.id);
+    const targetId = body.id ? String(body.id) : fallbackDefault?.id;
+    if (!targetId) return jsonError('Persona tidak ditemukan.', 404);
+    const existing = await requireOwnedPersona(user.id, targetId);
 
     if (body.action === 'set_default') {
-      db.prepare('UPDATE user_personas SET is_default = 0').run();
-      db.prepare('UPDATE user_personas SET is_default = 1, updated_at = ? WHERE id = ?').run(
-        now,
-        existing.id
-      );
-      invalidatePersonasCache();
-      const updatedDefault = getPersonaById(existing.id);
-      syncDefaultToLegacyTable(updatedDefault);
-
-      const personas = getAllPersonas().map((p) => ({
-        ...p,
-        is_default: Boolean(p.is_default),
-      }));
-      return NextResponse.json({
-        persona: updatedDefault ? { ...updatedDefault, is_default: true } : null,
-        personas,
+      await withTransaction(async (client) => {
+        await client.query('UPDATE user_personas SET is_default = 0 WHERE user_id = $1', [user.id]);
+        await client.query(
+          'UPDATE user_personas SET is_default = 1, updated_at = now() WHERE id = $1 AND user_id = $2',
+          [existing.id, user.id]
+        );
       });
+      return listResponse(user.id, await requireOwnedPersona(user.id, existing.id));
     }
 
     const displayName =
-      body.display_name !== undefined
-        ? String(body.display_name).trim() || 'Kamu'
-        : existing.display_name;
-    const avatar = body.avatar !== undefined ? String(body.avatar).trim() : existing.avatar || '';
-    const description =
-      body.description !== undefined ? String(body.description).trim() : existing.description || '';
-    const likes = body.likes !== undefined ? String(body.likes).trim() : existing.likes || '';
-    const dislikes =
-      body.dislikes !== undefined ? String(body.dislikes).trim() : existing.dislikes || '';
-    const makeDefault =
-      body.is_default !== undefined ? Boolean(body.is_default) : Boolean(existing.is_default);
+      body.display_name !== undefined ? limitText(body.display_name, 60) || 'Kamu' : existing.display_name;
+    const avatar = body.avatar !== undefined ? await assertAvatarOwnership(body.avatar, user.id) : existing.avatar || '';
+    const description = body.description !== undefined ? limitText(body.description, 4000) : existing.description || '';
+    const likes = body.likes !== undefined ? limitText(body.likes, 1000) : existing.likes || '';
+    const dislikes = body.dislikes !== undefined ? limitText(body.dislikes, 1000) : existing.dislikes || '';
+    const makeDefault = body.is_default !== undefined ? Boolean(body.is_default) : Boolean(existing.is_default);
 
-    if (makeDefault) {
-      db.prepare('UPDATE user_personas SET is_default = 0').run();
-    }
-
-    db.prepare(`
-      UPDATE user_personas SET
-        display_name = ?,
-        avatar = ?,
-        description = ?,
-        likes = ?,
-        dislikes = ?,
-        is_default = ?,
-        updated_at = ?
-      WHERE id = ?
-    `).run(
-      displayName,
-      avatar,
-      description,
-      likes,
-      dislikes,
-      makeDefault ? 1 : 0,
-      now,
-      existing.id
-    );
-
-    // Hapus file avatar persona lama jika diganti dengan yang baru
-    if (existing.avatar && avatar && existing.avatar !== avatar) {
-      replaceUploadAsset(existing.avatar, avatar);
-    }
-
-    invalidatePersonasCache();
-    const updated = getPersonaById(existing.id);
-    if (updated && updated.is_default) {
-      syncDefaultToLegacyTable(updated);
-    }
-
-    if (body.applyToAllChats && updated) {
-      db.prepare('UPDATE chats SET persona_id = ?, persona_snapshot = ?, use_latest_persona = 1').run(
-        updated.id,
-        JSON.stringify(updated)
+    const updated = await withTransaction(async (client) => {
+      if (makeDefault) {
+        await client.query('UPDATE user_personas SET is_default = 0 WHERE user_id = $1', [user.id]);
+      }
+      const row = await queryOne<UserPersonaRow>(
+        `UPDATE user_personas SET
+           display_name = $1, avatar = $2, description = $3, likes = $4, dislikes = $5,
+           is_default = $6, updated_at = now()
+         WHERE id = $7 AND user_id = $8
+         RETURNING *`,
+        [displayName, avatar, description, likes, dislikes, makeDefault ? 1 : 0, existing.id, user.id],
+        client
       );
+
+      if (body.applyToAllChats && row) {
+        await client.query(
+          'UPDATE chats SET persona_id = $1, persona_snapshot = $2, use_latest_persona = 1 WHERE user_id = $3',
+          [row.id, JSON.stringify(stripOwner(row)), user.id]
+        );
+      }
+      return row;
+    });
+
+    // Hapus avatar lama milik pengguna jika diganti dan tidak dipakai entitas lain
+    if (existing.avatar && existing.avatar !== avatar) {
+      await deleteUploadAsset(existing.avatar, user.id);
     }
 
-    const personas = getAllPersonas().map((p) => ({
-      ...p,
-      is_default: Boolean(p.is_default),
-    }));
-
-    return NextResponse.json({
-      persona: updated ? { ...updated, is_default: Boolean(updated.is_default) } : null,
-      personas,
-    });
+    return listResponse(user.id, updated);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memperbarui persona pengguna.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memperbarui persona pengguna.');
   }
 }
 
 export async function DELETE(req: NextRequest) {
   try {
-    ensureMultiPersonaSchema();
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-    if (!id) {
-      return NextResponse.json({ error: 'ID persona wajib disertakan.' }, { status: 400 });
-    }
+    const user = await requireUser(req);
+    const id = new URL(req.url).searchParams.get('id');
+    if (!id) return jsonError('ID persona wajib disertakan.', 400);
 
-    const all = getAllPersonas();
-    if (all.length <= 1) {
-      return NextResponse.json(
-        { error: 'Minimal harus ada 1 persona pengguna yang tersisa.' },
-        { status: 400 }
-      );
-    }
+    const all = await getAllPersonas(user.id);
+    if (all.length <= 1) return jsonError('Minimal harus ada 1 persona pengguna yang tersisa.', 400);
+    const target = await requireOwnedPersona(user.id, id);
 
-    const db = getDb();
-    const target = all.find((p) => p.id === id);
-    db.prepare('DELETE FROM user_personas WHERE id = ?').run(id);
-    invalidatePersonasCache();
+    await withTransaction(async (client) => {
+      await client.query('DELETE FROM user_personas WHERE id = $1 AND user_id = $2', [id, user.id]);
 
-    // Hapus fisik aset avatar persona jika tidak digunakan oleh karakter atau persona lain
-    if (target?.avatar) {
-      deleteUploadAsset(target.avatar);
-    }
+      const remaining = all.filter((p) => p.id !== id);
+      let newDefaultId = remaining.find((p) => p.is_default)?.id || null;
+      if (target.is_default || !newDefaultId) {
+        newDefaultId = remaining[0].id;
+        await client.query('UPDATE user_personas SET is_default = 1 WHERE id = $1 AND user_id = $2', [
+          newDefaultId,
+          user.id,
+        ]);
+      }
 
-    const remaining = getAllPersonas();
-    if (target?.is_default && remaining.length > 0) {
-      db.prepare('UPDATE user_personas SET is_default = 1 WHERE id = ?').run(remaining[0].id);
-      syncDefaultToLegacyTable(remaining[0]);
-    }
-
-    const newDefault = getDefaultPersona();
-    if (newDefault) {
-      db.prepare('UPDATE chats SET persona_id = ? WHERE persona_id = ?').run(newDefault.id, id);
-      db.prepare('UPDATE group_chats SET persona_id = ? WHERE persona_id = ?').run(newDefault.id, id);
-    }
-
-    const personas = getAllPersonas().map((p) => ({
-      ...p,
-      is_default: Boolean(p.is_default),
-    }));
-
-    return NextResponse.json({
-      persona: getDefaultPersona(),
-      personas,
+      await client.query('UPDATE chats SET persona_id = $1 WHERE persona_id = $2 AND user_id = $3', [
+        newDefaultId,
+        id,
+        user.id,
+      ]);
+      await client.query('UPDATE group_chats SET persona_id = $1 WHERE persona_id = $2 AND user_id = $3', [
+        newDefaultId,
+        id,
+        user.id,
+      ]);
     });
+
+    if (target.avatar) await deleteUploadAsset(target.avatar, user.id);
+
+    return listResponse(user.id, await getDefaultPersona(user.id));
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal menghapus persona.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal menghapus persona.');
   }
 }

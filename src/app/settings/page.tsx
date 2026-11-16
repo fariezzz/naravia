@@ -3,66 +3,27 @@
 import React, { useEffect, useState } from 'react';
 import {
   User,
-  Cpu,
   BarChart3,
+  SlidersHorizontal,
+  KeyRound,
   Database,
   Save,
   CheckCircle2,
   AlertCircle,
   Download,
   Trash2,
-  Zap,
   Image as ImageIcon,
   Plus,
   Star,
-  Search,
 } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ImageCropModal from '@/components/ImageCropModal';
+import AccountPanel from '@/components/AccountPanel';
 import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
 
-const PROVIDER_PRESETS = [
-  {
-    label: '9Router Lokal (Port 20128)',
-    provider: 'openai_compatible',
-    baseUrl: 'http://localhost:20128/v1',
-    defaultModel: 'oc/deepseek-v4.1-flash-free',
-  },
-  {
-    label: 'OpenRouter (OpenAI-Compatible)',
-    provider: 'openai_compatible',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    defaultModel: 'google/gemma-3-27b-it:free',
-  },
-  {
-    label: 'Groq Cloud (OpenAI-Compatible)',
-    provider: 'openai_compatible',
-    baseUrl: 'https://api.groq.com/openai/v1',
-    defaultModel: 'llama-3.3-70b-versatile',
-  },
-  {
-    label: 'DeepSeek API (OpenAI-Compatible)',
-    provider: 'openai_compatible',
-    baseUrl: 'https://api.deepseek.com/v1',
-    defaultModel: 'deepseek-chat',
-  },
-  {
-    label: 'Google AI Studio (Gemma / Gemini)',
-    provider: 'google',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    defaultModel: 'gemma-4-26b-a4b-it',
-  },
-  {
-    label: 'Ollama Lokal (Native / OpenAI)',
-    provider: 'ollama',
-    baseUrl: 'http://localhost:11434',
-    defaultModel: 'gemma3:12b',
-  },
-];
-
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'persona' | 'llm' | 'stats' | 'data'>('persona');
+  const [activeTab, setActiveTab] = useState<'persona' | 'chat' | 'stats' | 'account' | 'data'>('persona');
 
   const [personas, setPersonas] = useState<any[]>(() => {
     return getClientCache<any[]>('settings_personas') || [];
@@ -94,19 +55,12 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, string>>(() => {
     return (
       getClientCache<Record<string, string>>('settings_data') || {
-        provider: 'auto',
-        llm_base_url: 'https://generativelanguage.googleapis.com/v1beta',
-        llm_api_key: '',
-        model: 'gemma-4-26b-a4b-it',
         temperature: '0.9',
         max_tokens: '1024',
         default_reply_style: 'sedang',
         history_limit: '20',
         auto_summarize_threshold: '30',
         auto_extract_memory: 'true',
-        daily_token_budget: '1000000',
-        search_provider: 'model',
-        search_api_key: '',
       }
     );
   });
@@ -114,15 +68,11 @@ export default function SettingsPage() {
   const [stats, setStats] = useState<any>(() => {
     return getClientCache<any>('settings_stats') || null;
   });
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [fetchingModels, setFetchingModels] = useState(false);
   const [loading, setLoading] = useState(() => {
     const cachedP = getClientCache<any[]>('settings_personas');
     return !cachedP || cachedP.length === 0;
   });
   const [saving, setSaving] = useState(false);
-  const [testingConn, setTestingConn] = useState(false);
-  const [testingSearch, setTestingSearch] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -168,18 +118,8 @@ export default function SettingsPage() {
       }
 
       if (sData.settings) {
-        const sObj = {
-          ...sData.settings,
-          llm_base_url:
-            sData.settings.llm_base_url ||
-            'https://generativelanguage.googleapis.com/v1beta',
-          llm_api_key: sData.settings.llm_api_key_masked || '',
-        };
-        setSettings((prev) => ({
-          ...prev,
-          ...sObj,
-        }));
-        setClientCache('settings_data', sObj);
+        setSettings((prev) => ({ ...prev, ...sData.settings }));
+        setClientCache('settings_data', sData.settings);
       }
 
       if (stData.summary) {
@@ -380,139 +320,23 @@ export default function SettingsPage() {
     setError('');
     setNotice('');
     try {
-      const payload = { ...settings };
-      delete payload.google_api_key;
-      delete payload.ollama_api_key;
-
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(settings),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal menyimpan pengaturan.');
       if (data.settings) {
-        setSettings((prev) => {
-          const sObj = {
-            ...prev,
-            ...data.settings,
-            llm_api_key: data.settings.llm_api_key_masked || prev.llm_api_key || '',
-          };
-          setClientCache('settings_data', sObj);
-          return sObj;
-        });
+        setSettings(data.settings);
+        setClientCache('settings_data', data.settings);
         invalidateClientCache('chat_room_');
       }
-      setNotice('Pengaturan Base URL, model, dan konteks berhasil disimpan.');
+      setNotice('Preferensi percakapan berhasil disimpan.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal menyimpan pengaturan.');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleFetchModels = async () => {
-    setFetchingModels(true);
-    setError('');
-    try {
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'fetch_models',
-          baseUrl: settings.llm_base_url,
-          apiKey: settings.llm_api_key,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gagal memuat daftar model.');
-      const list = Array.isArray(data.models) ? data.models : [];
-      setAvailableModels(list);
-      if (list.length > 0 && !list.includes(settings.model)) {
-        setNotice(`Berhasil memuat ${list.length} model dari endpoint. Pilih salah satu dari daftar.`);
-      } else {
-        setNotice(`Berhasil memuat ${list.length} model dari endpoint.`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal mengambil daftar model.');
-    } finally {
-      setFetchingModels(false);
-    }
-  };
-
-  const handleTestConnection = async () => {
-    setTestingConn(true);
-    setError('');
-    setNotice('');
-    try {
-      const payload = { ...settings };
-      delete payload.google_api_key;
-      delete payload.ollama_api_key;
-
-      const putRes = await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const putData = await putRes.json();
-      if (putData.settings) {
-        setSettings((prev) => ({
-          ...prev,
-          ...putData.settings,
-          llm_api_key: putData.settings.llm_api_key_masked || prev.llm_api_key || '',
-        }));
-      }
-
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'test_connection' }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Koneksi ke penyedia model gagal.');
-      setNotice(`Koneksi berhasil (${data.modelUsed}): "${data.reply}"`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal menguji koneksi LLM.');
-    } finally {
-      setTestingConn(false);
-    }
-  };
-
-  const handleTestSearch = async () => {
-    setTestingSearch(true);
-    setError('');
-    setNotice('');
-    try {
-      // Simpan dulu pengaturan penyedia pencarian & kuncinya agar sinkron dengan server
-      const payload = { ...settings };
-      delete payload.google_api_key;
-      delete payload.ollama_api_key;
-      await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'test_search', query: 'Hatsune Miku karakter vocaloid' }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Gagal menguji pencarian web.');
-
-      if (data.info) {
-        setNotice(data.info);
-      } else {
-        const sourcesPreview = (data.sources || []).slice(0, 3).join(' | ');
-        setNotice(
-          `Pencarian via ${data.provider} berhasil. Ditemukan ${data.sources?.length || 0} sumber. Contoh: ${sourcesPreview || '-'}`
-        );
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Gagal menguji pencarian web.');
-    } finally {
-      setTestingSearch(false);
     }
   };
 
@@ -526,7 +350,8 @@ export default function SettingsPage() {
       });
       if (!res.ok) throw new Error('Gagal menghapus seluruh data.');
       setResetModalOpen(false);
-      setNotice('Seluruh data percakapan, karakter, dan aset foto yang tidak terpakai telah dihapus.');
+      invalidateClientCache();
+      setNotice('Seluruh karakter, percakapan, dunia, dan memori milik akunmu telah dihapus.');
       loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal mereset data.');
@@ -556,18 +381,19 @@ export default function SettingsPage() {
   };
 
   const tabs = [
-    { id: 'persona' as const, label: 'Persona Kamu', icon: User },
-    { id: 'llm' as const, label: 'Model AI & Konteks', icon: Cpu },
-    { id: 'stats' as const, label: 'Statistik Token', icon: BarChart3 },
-    { id: 'data' as const, label: 'Cadangan & Data', icon: Database },
+    { id: 'persona' as const, label: 'Persona', icon: User },
+    { id: 'chat' as const, label: 'Preferensi Chat', icon: SlidersHorizontal },
+    { id: 'stats' as const, label: 'Pemakaian Token', icon: BarChart3 },
+    { id: 'account' as const, label: 'Akun', icon: KeyRound },
+    { id: 'data' as const, label: 'Data', icon: Database },
   ];
 
   return (
     <div className="max-w-5xl w-full mx-auto px-4 py-6 space-y-6">
       <div>
-        <h1 className="text-lg font-bold text-slate-900">Pengaturan & Persona</h1>
-        <p className="text-xs text-slate-500">
-          Kelola identitas persona Anda, Base URL & API key berbagai provider AI, pantau pemakaian token, serta cadangkan file SQLite.
+        <h1 className="text-lg font-bold text-slate-900 dark:text-white">Pengaturan</h1>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Kelola persona, preferensi percakapan, pemakaian token, dan akunmu.
         </p>
       </div>
 
@@ -877,311 +703,60 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* Tab 2: Pengaturan Universal LLM & Konteks */}
-          {activeTab === 'llm' && (
+          {/* Tab 2: Preferensi Percakapan Pribadi */}
+          {activeTab === 'chat' && (
             <form
               onSubmit={handleSaveSettings}
-              className="bg-white rounded-2xl border border-slate-200 p-5 space-y-5 shadow-2xs"
+              className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-5 shadow-2xs"
             >
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white">Preferensi Percakapan</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Nilai bawaan untuk ruang chat baru. Setiap ruang chat tetap bisa diatur terpisah.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900">
-                    Konfigurasi Universal Base URL & Model AI
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Mendukung segala jenis provider (OpenAI-Compatible, OpenRouter, Groq, DeepSeek, Chutes, Together, Google AI Studio, Ollama, LM Studio, dll).
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={testingConn}
-                  onClick={handleTestConnection}
-                  className="h-9 px-3.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
-                >
-                  <Zap className="w-3.5 h-3.5" />
-                  <span>{testingConn ? 'Menguji...' : 'Tes Koneksi AI'}</span>
-                </button>
-              </div>
-
-              {/* Tombol Pintasan Preset Provider Populer */}
-              <div className="space-y-1.5">
-                <span className="block text-[11px] font-semibold text-slate-500">
-                  Isi Cepat Base URL Populer (Atau ketik bebas di bawah):
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {PROVIDER_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() =>
-                        setSettings((s) => ({
-                          ...s,
-                          provider: preset.provider,
-                          llm_base_url: preset.baseUrl,
-                          model: preset.defaultModel,
-                        }))
-                      }
-                      className="h-7 px-2.5 rounded-lg border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 text-[11px] font-medium text-slate-700 transition-colors"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Base URL Endpoint Provider
-                  </label>
-                  <input
-                    type="text"
-                    value={settings.llm_base_url || ''}
-                    onChange={(e) => setSettings((s) => ({ ...s, llm_base_url: e.target.value }))}
-                    placeholder="Contoh: https://openrouter.ai/api/v1 atau https://api.openai.com/v1"
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 font-mono"
-                  />
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Bisa diisi URL endpoint OpenAI-compatible apa pun (<code>.../v1</code>), URL Google (<code>.../v1beta</code>), atau URL Ollama lokal.
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Format Protokol API
-                  </label>
-                  <select
-                    value={settings.provider || 'auto'}
-                    onChange={(e) => setSettings((s) => ({ ...s, provider: e.target.value }))}
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white"
-                  >
-                    <option value="auto">Deteksi Otomatis dari Base URL</option>
-                    <option value="openai_compatible">OpenAI-Compatible (/v1/chat/completions)</option>
-                    <option value="google">Google Native API (:generateContent)</option>
-                    <option value="ollama">Ollama Native API (/api/chat)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Nama / ID Model Chatting
-                    </label>
-                    <button
-                      type="button"
-                      disabled={fetchingModels}
-                      onClick={handleFetchModels}
-                      className="text-[11px] font-semibold text-indigo-600 hover:underline"
-                    >
-                      {fetchingModels ? 'Memuat Model...' : 'Muat Daftar Model dari URL'}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    list="provider-models-list"
-                    value={settings.model || ''}
-                    onChange={(e) => setSettings((s) => ({ ...s, model: e.target.value }))}
-                    placeholder="Contoh: oc/deepseek-v4.1-flash-free, gemma-4-26b-a4b-it..."
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 font-mono"
-                  />
-                  {availableModels.length > 0 && (
-                    <>
-                      <datalist id="provider-models-list">
-                        {availableModels.map((m) => (
-                          <option key={m} value={m} />
-                        ))}
-                      </datalist>
-                      <select
-                        value={availableModels.includes(settings.model) ? settings.model : ''}
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            setSettings((s) => ({ ...s, model: e.target.value }));
-                          }
-                        }}
-                        className="mt-1.5 w-full h-8 px-2.5 rounded-lg border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-[#111827] text-xs text-slate-800 dark:text-slate-100 font-mono focus:outline-none"
-                      >
-                        <option value="">-- Pilih dari {availableModels.length} model tersedia --</option>
-                        {availableModels.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
-                    </>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    API Key Chatting (Opsional untuk server lokal tanpa auth)
-                  </label>
-                  <input
-                    type="password"
-                    value={settings.llm_api_key || ''}
-                    onChange={(e) => setSettings((s) => ({ ...s, llm_api_key: e.target.value }))}
-                    placeholder="Masukkan API Key provider Anda..."
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
-                  />
-                </div>
-              </div>
-
-              {/* Pemisahan Model Khusus Riset Karakter */}
-              <div className="pt-4 border-t border-slate-100/80 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900">Model Khusus Riset & Verifikasi Fakta</h4>
-                    <p className="text-[11px] text-slate-500">
-                      Opsional. Jika dikosongkan, sistem akan otomatis menggunakan model chatting utama di atas.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Nama / ID Model Riset
-                    </label>
-                    <input
-                      type="text"
-                      list="provider-models-list"
-                      value={settings.research_model || ''}
-                      onChange={(e) => setSettings((s) => ({ ...s, research_model: e.target.value }))}
-                      placeholder={settings.model || 'Gunakan model chatting utama'}
-                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Base URL Riset (Opsional)
-                    </label>
-                    <input
-                      type="text"
-                      value={settings.research_llm_base_url || ''}
-                      onChange={(e) => setSettings((s) => ({ ...s, research_llm_base_url: e.target.value }))}
-                      placeholder={settings.llm_base_url || 'Sama dengan Base URL utama'}
-                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      API Key Riset (Opsional)
-                    </label>
-                    <input
-                      type="password"
-                      value={settings.research_llm_api_key || ''}
-                      onChange={(e) => setSettings((s) => ({ ...s, research_llm_api_key: e.target.value }))}
-                      placeholder={settings.has_research_api_key === 'true' ? '••••••••' : 'Sama dengan API Key utama'}
-                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Penyedia Pencarian Web untuk Riset Karakter */}
-              <div className="pt-4 border-t border-slate-100/80 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900">Penyedia Pencarian Web (Riset)</h4>
-                    <p className="text-[11px] text-slate-500">
-                      Opsional. Jika "Pengetahuan Model" dipilih, riset murni mengandalkan ingatan model tanpa browsing web.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={testingSearch}
-                    onClick={handleTestSearch}
-                    className="h-9 px-3.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
-                  >
-                    <Search className="w-3.5 h-3.5" />
-                    <span>{testingSearch ? 'Menguji...' : 'Tes Pencarian Web'}</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Penyedia Pencarian
-                    </label>
-                    <select
-                      value={settings.search_provider || 'model'}
-                      onChange={(e) => setSettings((s) => ({ ...s, search_provider: e.target.value }))}
-                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white"
-                    >
-                      <option value="model">Pengetahuan Model (Tanpa Web Search)</option>
-                      <option value="tavily">Tavily Search API</option>
-                      <option value="brave">Brave Search API</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      API Key Pencarian
-                    </label>
-                    <input
-                      type="password"
-                      value={settings.search_api_key || ''}
-                      onChange={(e) => setSettings((s) => ({ ...s, search_api_key: e.target.value }))}
-                      placeholder="Masukkan API Key Tavily/Brave Anda..."
-                      disabled={settings.search_provider === 'model' || !settings.search_provider}
-                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 disabled:bg-slate-50 disabled:text-slate-400"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-3 border-t border-slate-100">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Temperature Default
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Temperature Bawaan</label>
                   <input
                     type="number"
                     step="0.05"
-                    min="0.1"
-                    max="1.5"
+                    min="0"
+                    max="2"
                     value={settings.temperature ?? ''}
                     placeholder="0.9"
                     onChange={(e) => setSettings((s) => ({ ...s, temperature: e.target.value }))}
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Max Tokens Balasan
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Max Tokens Balasan</label>
                   <input
                     type="number"
                     step="64"
-                    min="128"
-                    max="4096"
+                    min="64"
+                    max="8192"
                     value={settings.max_tokens ?? ''}
                     placeholder="1024"
                     onChange={(e) => setSettings((s) => ({ ...s, max_tokens: e.target.value }))}
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Gaya Balasan Default
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Gaya Balasan Bawaan</label>
                   <select
                     value={settings.default_reply_style || 'sedang'}
                     onChange={(e) => setSettings((s) => ({ ...s, default_reply_style: e.target.value }))}
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white"
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
                   >
-                    <option value="sedang">Sedang (1-2 paragraf)</option>
-                    <option value="pendek">Pendek (1-3 kalimat)</option>
+                    <option value="sedang">Sedang (1-2 Paragraf)</option>
+                    <option value="pendek">Pendek (1-3 Kalimat)</option>
                     <option value="panjang">Panjang (Deskriptif)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Batas Riwayat Pesan
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Batas Riwayat Pesan</label>
                   <input
                     type="number"
                     min="4"
@@ -1189,34 +764,30 @@ export default function SettingsPage() {
                     value={settings.history_limit ?? ''}
                     placeholder="20"
                     onChange={(e) => setSettings((s) => ({ ...s, history_limit: e.target.value }))}
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
                   />
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-xs text-slate-700">
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
                   <input
                     type="checkbox"
                     checked={settings.auto_extract_memory === 'true'}
                     onChange={(e) =>
-                      setSettings((s) => ({
-                        ...s,
-                        auto_extract_memory: e.target.checked ? 'true' : 'false',
-                      }))
+                      setSettings((s) => ({ ...s, auto_extract_memory: e.target.checked ? 'true' : 'false' }))
                     }
                     className="rounded border-slate-300"
                   />
-                  <span>Ekstraksi Memori Jangka Panjang Otomatis dari Percakapan</span>
+                  <span>Simpan Memori Jangka Panjang Otomatis</span>
                 </label>
-
                 <button
                   type="submit"
                   disabled={saving}
-                  className="h-9 px-5 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                  className="h-9 px-5 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{saving ? 'Menyimpan...' : 'Simpan Pengaturan'}</span>
+                  <span>{saving ? 'Menyimpan...' : 'Simpan Preferensi'}</span>
                 </button>
               </div>
             </form>
@@ -1237,13 +808,22 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs">
-                  <span className="text-xs text-slate-500">Perkiraan Sisa Kuota Harian</span>
-                  <p className="text-xl font-bold text-emerald-700 mt-1">
-                    {stats.summary.remaining_budget.toLocaleString('id-ID')}
-                  </p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    Dari batas {stats.summary.daily_budget.toLocaleString('id-ID')} token/hari
-                  </p>
+                  <span className="text-xs text-slate-500">Sisa Kuota Hari Ini</span>
+                  {stats.summary.daily_budget > 0 ? (
+                    <>
+                      <p className="text-xl font-bold text-emerald-700 mt-1">
+                        {Number(stats.summary.remaining_budget || 0).toLocaleString('id-ID')}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Dari batas {stats.summary.daily_budget.toLocaleString('id-ID')} token/hari, diperbarui tiap tengah malam
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xl font-bold text-emerald-700 mt-1">Tanpa Batas</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Akun ini tidak dibatasi kuota harian</p>
+                    </>
+                  )}
                 </div>
 
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs">
@@ -1301,25 +881,26 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* Tab 4: Cadangan Database SQLite & Hapus Data */}
+          {/* Tab 4: Akun & Keamanan */}
+          {activeTab === 'account' && <AccountPanel />}
+
+          {/* Tab 5: Ekspor & Hapus Data Milik Akun */}
           {activeTab === 'data' && (
             <div className="space-y-4">
               <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-2xs">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    Cadangkan Database Lokal (SQLite)
-                  </h3>
+                  <h3 className="text-sm font-semibold text-slate-900">Ekspor Data Akun</h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Unduh satu file utuh <code>naravia.db</code> (~150 KB) yang menyimpan seluruh karakter, percakapan, dunia, dan memori Anda.
+                    Unduh salinan seluruh karakter, persona, percakapan, dunia, dan memori milikmu dalam format JSON.
                   </p>
                 </div>
                 <a
-                  href="/api/backup"
+                  href="/api/export"
                   download
                   className="h-9 px-4 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Unduh File SQLite</span>
+                  <span>Unduh JSON</span>
                 </a>
               </div>
 
@@ -1329,7 +910,7 @@ export default function SettingsPage() {
                     Bersihkan File Aset Gambar Yatim
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Pindai folder <code>public/uploads/</code> dan hapus file foto profil lama atau sisa upload yang sudah tidak lagi terikat pada karakter maupun persona aktif.
+                    Hapus foto profil lama atau sisa unggahanmu yang sudah tidak dipakai karakter maupun persona.
                   </p>
                 </div>
                 <button
@@ -1346,10 +927,10 @@ export default function SettingsPage() {
               <div className="bg-white rounded-2xl border border-rose-200 p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-2xs">
                 <div>
                   <h3 className="text-sm font-semibold text-rose-700">
-                    Hapus Seluruh Data Aplikasi
+                    Hapus Seluruh Data Akun
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Menghapus semua karakter, ruang chat, dunia, dan memori dari database lokal. Cadangkan file SQLite Anda terlebih dahulu.
+                    Menghapus semua karakter, ruang chat, dunia, dan memori milik akunmu. Ekspor datamu terlebih dahulu.
                   </p>
                 </div>
                 <button
@@ -1368,8 +949,8 @@ export default function SettingsPage() {
 
       <ConfirmModal
         open={resetModalOpen}
-        title="Hapus Seluruh Data Naravia?"
-        description="Tindakan ini akan mengosongkan seluruh karakter, riwayat percakapan, dunia, dan memori secara permanen."
+        title="Hapus Seluruh Data Akunmu?"
+        description="Seluruh karakter, riwayat percakapan, dunia, dan memori milikmu akan dihapus permanen. Akun dan persona tetap ada."
         confirmLabel="Ya, Hapus Semua"
         loading={saving}
         onConfirm={handleResetAllData}

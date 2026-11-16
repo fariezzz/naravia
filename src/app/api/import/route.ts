@@ -1,62 +1,74 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
-import { getDefaultPersona } from '@/lib/db';
+import { ensureUploadsDir, MAX_UPLOAD_BYTES } from '@/lib/assets';
+import { requireUser } from '@/lib/auth';
+import { handleApiError, jsonError } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { enforceRateLimit } from '@/lib/rateLimit';
 import { extractCharacterJsonFromPng, mapCardJsonToNaravia } from '@/lib/sillytavern';
+import { getDefaultPersona, registerUpload } from '@/lib/store';
+
+export const runtime = 'nodejs';
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.formData();
-    const file = formData.get('file') as File | null;
+    const user = await requireUser(req);
+    enforceRateLimit(`import:${user.id}`, 30, 60 * 60_000);
 
-    if (!file) {
-      return NextResponse.json({ error: 'Pilih file kartu karakter (.json atau .png) terlebih dahulu.' }, { status: 400 });
+    const formData = await req.formData();
+    const file = formData.get('file');
+    if (!(file instanceof File)) {
+      return jsonError('Pilih file kartu karakter (.json atau .png) terlebih dahulu.', 400);
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return jsonError('Ukuran file maksimal 5 MB.', 400);
     }
 
-    const persona = getDefaultPersona();
+    const persona = await getDefaultPersona(user.id);
     const userName = persona?.display_name || 'Kamu';
-
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const buffer = Buffer.from(await file.arrayBuffer());
     const fileNameLower = file.name.toLowerCase();
 
     let rawJson: Record<string, any>;
     let savedAvatarUrl = '';
 
     if (fileNameLower.endsWith('.png') || file.type === 'image/png') {
+      // Validasi isi file benar-benar PNG, bukan hanya dari ekstensi
+      if (buffer.length < 8 || !buffer.subarray(0, 8).equals(PNG_SIGNATURE)) {
+        return jsonError('File bukan gambar PNG yang valid.', 400);
+      }
       rawJson = extractCharacterJsonFromPng(buffer);
 
-      // Simpan gambar PNG tersebut sebagai avatar karakter di public/uploads
-      const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-      const avatarFileName = `card-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.png`;
-      fs.writeFileSync(path.join(uploadsDir, avatarFileName), buffer);
+      // Simpan gambar kartu sebagai avatar karakter milik pengguna
+      const avatarFileName = `${newId('card')}.png`;
+      fs.writeFileSync(path.join(ensureUploadsDir(), avatarFileName), buffer);
+      await registerUpload(avatarFileName, user.id, buffer.length);
       savedAvatarUrl = `/uploads/${avatarFileName}`;
     } else if (fileNameLower.endsWith('.json') || file.type.includes('json')) {
       try {
         rawJson = JSON.parse(buffer.toString('utf8'));
       } catch {
-        return NextResponse.json({ error: 'File JSON tidak valid atau rusak.' }, { status: 400 });
+        return jsonError('File JSON tidak valid atau rusak.', 400);
       }
     } else {
-      return NextResponse.json(
-        { error: 'Format file tidak didukung. Gunakan file kartu karakter .json atau .png.' },
-        { status: 400 }
-      );
+      return jsonError('Format file tidak didukung. Gunakan file kartu karakter .json atau .png.', 400);
     }
 
     const mapped = mapCardJsonToNaravia(rawJson, userName);
+    // Avatar dari JSON eksternal hanya diterima jika berupa URL https
+    const externalAvatar = typeof rawJson.avatar === 'string' && /^https:\/\//i.test(rawJson.avatar) ? rawJson.avatar : '';
+
     return NextResponse.json({
       draft: {
         ...mapped,
-        avatar: savedAvatarUrl || rawJson.avatar || '',
+        avatar: savedAvatarUrl || externalAvatar,
         research_notes: JSON.parse(mapped.research_notes),
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal membaca file kartu karakter.';
-    return NextResponse.json({ error: message }, { status: 400 });
+    return handleApiError(err, 'Gagal membaca file kartu karakter.', 400);
   }
 }

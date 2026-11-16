@@ -1,237 +1,167 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CharacterRow, formatCharacterRow, getDb } from '@/lib/db';
-import { deleteUploadAsset, replaceUploadAsset } from '@/lib/assets';
+import { assertAvatarOwnership, deleteUploadAsset } from '@/lib/assets';
+import { requireUser } from '@/lib/auth';
+import {
+  normalizeExampleDialogues,
+  normalizeGreetings,
+  normalizeResearchNotes,
+  normalizeTags,
+  normalizeTemperature,
+} from '@/lib/characterInput';
+import { CharacterRow, execute, query, queryOne } from '@/lib/db';
+import { formatCharacterRow, stripOwner } from '@/lib/format';
+import { handleApiError, jsonError, readJson } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { requireOwnedCharacter, resolveOwnedWorldId } from '@/lib/store';
 
-export async function GET(
-  _req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export const runtime = 'nodejs';
+
+type Ctx = { params: Promise<{ id: string }> };
+
+export async function GET(req: NextRequest, context: Ctx) {
   try {
+    const user = await requireUser(req);
     const { id } = await context.params;
-    const db = getDb();
 
-    const row = (db
-      .prepare(`
-        SELECT
-          c.*,
-          w.name as world_name,
-          COUNT(ch.id) as chat_count,
-          MAX(ch.updated_at) as last_chat_at
-        FROM characters c
-        LEFT JOIN worlds w ON c.world_id = w.id
-        LEFT JOIN chats ch ON ch.character_id = c.id
-        WHERE c.id = ?
-        GROUP BY c.id
-      `)
-      .get(id) as unknown) as (CharacterRow & { chat_count: number; last_chat_at: string | null; world_name: string | null }) | undefined;
+    const row = await queryOne<CharacterRow & { chat_count: number; last_chat_at: string | null; world_name: string | null }>(
+      `SELECT c.*, w.name AS world_name, COUNT(ch.id) AS chat_count, MAX(ch.updated_at) AS last_chat_at
+       FROM characters c
+       LEFT JOIN worlds w ON c.world_id = w.id
+       LEFT JOIN chats ch ON ch.character_id = c.id
+       WHERE c.id = $1 AND c.user_id = $2
+       GROUP BY c.id, w.name`,
+      [id, user.id]
+    );
+    if (!row) return jsonError('Karakter tidak ditemukan.', 404);
 
-    if (!row) {
-      return NextResponse.json({ error: 'Karakter tidak ditemukan.' }, { status: 404 });
-    }
+    const chats = await query(
+      `SELECT ch.*, COUNT(m.id) AS message_count
+       FROM chats ch
+       LEFT JOIN messages m ON m.chat_id = ch.id
+       WHERE ch.character_id = $1 AND ch.user_id = $2
+       GROUP BY ch.id
+       ORDER BY ch.updated_at DESC`,
+      [id, user.id]
+    );
 
-    const chats = db
-      .prepare(`
-        SELECT ch.*, COUNT(m.id) as message_count
-        FROM chats ch
-        LEFT JOIN messages m ON m.chat_id = ch.id
-        WHERE ch.character_id = ?
-        GROUP BY ch.id
-        ORDER BY ch.updated_at DESC
-      `)
-      .all(id);
-
-    const memories = db
-      .prepare('SELECT * FROM memories WHERE character_id = ? OR character_id IS NULL ORDER BY created_at DESC')
-      .all(id);
+    const memories = await query(
+      `SELECT * FROM memories
+       WHERE user_id = $2 AND (character_id = $1 OR character_id IS NULL)
+       ORDER BY created_at DESC`,
+      [id, user.id]
+    );
 
     return NextResponse.json({
       character: formatCharacterRow(row),
-      chats,
-      memories,
+      chats: chats.map(stripOwner),
+      memories: memories.map(stripOwner),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memuat profil karakter.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memuat profil karakter.');
   }
 }
 
-export async function PUT(
-  req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export async function PUT(req: NextRequest, context: Ctx) {
   try {
+    const user = await requireUser(req);
     const { id } = await context.params;
-    const body = await req.json();
-    const db = getDb();
+    const body = await readJson(req);
+    const existing = await requireOwnedCharacter(user.id, id);
 
-    const existing = (db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as unknown) as CharacterRow | undefined;
-    if (!existing) {
-      return NextResponse.json({ error: 'Karakter tidak ditemukan.' }, { status: 404 });
-    }
-
-    // Jika aksi duplikat karakter
+    // Duplikat karakter milik sendiri
     if (body.action === 'duplicate') {
-      const now = new Date().toISOString();
-      const newId = `char-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const dupName = `${existing.name} (Salinan)`;
-
-      db.prepare(`
-        INSERT INTO characters (
-          id, name, tagline, avatar, description, personality, speaking_style,
-          scenario, greeting, example_dialogues, tags, research_notes, world_id,
-          is_pinned, is_favorite, temperature_override, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        newId,
-        dupName,
-        existing.tagline,
-        existing.avatar,
-        existing.description,
-        existing.personality,
-        existing.speaking_style,
-        existing.scenario,
-        existing.greeting,
-        existing.example_dialogues,
-        existing.tags,
-        existing.research_notes,
-        existing.world_id,
-        0,
-        existing.is_favorite,
-        existing.temperature_override,
-        now,
-        now
+      const duplicated = await queryOne<CharacterRow>(
+        `INSERT INTO characters (
+           id, user_id, name, tagline, avatar, description, personality, speaking_style,
+           scenario, greeting, example_dialogues, tags, research_notes, world_id,
+           is_pinned, is_favorite, temperature_override
+         )
+         SELECT $1, user_id, name || ' (Salinan)', tagline, avatar, description, personality, speaking_style,
+           scenario, greeting, example_dialogues, tags, research_notes, world_id,
+           0, is_favorite, temperature_override
+         FROM characters WHERE id = $2 AND user_id = $3
+         RETURNING *`,
+        [newId('char'), id, user.id]
       );
-
-      const duplicated = (db.prepare('SELECT * FROM characters WHERE id = ?').get(newId) as unknown) as CharacterRow;
-      return NextResponse.json({ character: formatCharacterRow(duplicated) });
+      return NextResponse.json({ character: formatCharacterRow(duplicated!) });
     }
 
-    const now = new Date().toISOString();
     const name = body.name !== undefined ? String(body.name).trim() : existing.name;
-    if (!name) {
-      return NextResponse.json({ error: 'Nama karakter tidak boleh kosong.' }, { status: 400 });
-    }
+    if (!name) return jsonError('Nama karakter tidak boleh kosong.', 400);
+    if (name.length > 120) return jsonError('Nama karakter maksimal 120 karakter.', 400);
 
     const greetings =
-      body.greeting !== undefined
-        ? JSON.stringify(
-            Array.isArray(body.greeting)
-              ? body.greeting.map((g: unknown) => String(g || '').trim()).filter(Boolean)
-              : [String(body.greeting).trim()].filter(Boolean)
-          )
-        : existing.greeting;
-
+      body.greeting !== undefined ? JSON.stringify(normalizeGreetings(body.greeting)) : existing.greeting;
     const exampleDialogues =
       body.example_dialogues !== undefined
-        ? JSON.stringify(
-            Array.isArray(body.example_dialogues)
-              ? body.example_dialogues
-                  .map((d: any) => ({
-                    user: String(d?.user || '').trim(),
-                    char: String(d?.char || '').trim(),
-                  }))
-                  .filter((d: { user: string; char: string }) => d.user || d.char)
-              : []
-          )
+        ? JSON.stringify(normalizeExampleDialogues(body.example_dialogues))
         : existing.example_dialogues;
-
-    const tags =
-      body.tags !== undefined
-        ? JSON.stringify(
-            Array.isArray(body.tags)
-              ? body.tags.map((t: unknown) => String(t || '').trim()).filter(Boolean)
-              : []
-          )
-        : existing.tags;
-
+    const tags = body.tags !== undefined ? JSON.stringify(normalizeTags(body.tags)) : existing.tags;
     const researchNotes =
-      body.research_notes !== undefined
-        ? typeof body.research_notes === 'object' && body.research_notes !== null
-          ? JSON.stringify(body.research_notes)
-          : String(body.research_notes || '')
-        : existing.research_notes;
+      body.research_notes !== undefined ? normalizeResearchNotes(body.research_notes) : existing.research_notes;
 
     const oldAvatar = existing.avatar;
-    const newAvatar = body.avatar !== undefined ? String(body.avatar).trim() : existing.avatar;
+    const newAvatar = body.avatar !== undefined ? await assertAvatarOwnership(body.avatar, user.id) : existing.avatar;
+    const worldId = body.world_id !== undefined ? await resolveOwnedWorldId(user.id, body.world_id) : existing.world_id;
 
-    db.prepare(`
-      UPDATE characters SET
-        name = ?,
-        tagline = ?,
-        avatar = ?,
-        description = ?,
-        personality = ?,
-        speaking_style = ?,
-        scenario = ?,
-        greeting = ?,
-        example_dialogues = ?,
-        tags = ?,
-        research_notes = ?,
-        world_id = ?,
-        is_pinned = ?,
-        is_favorite = ?,
-        temperature_override = ?,
-        updated_at = ?
-      WHERE id = ?
-    `).run(
-      name,
-      body.tagline !== undefined ? String(body.tagline).trim() : existing.tagline,
-      newAvatar,
-      body.description !== undefined ? String(body.description).trim() : existing.description,
-      body.personality !== undefined ? String(body.personality).trim() : existing.personality,
-      body.speaking_style !== undefined ? String(body.speaking_style).trim() : existing.speaking_style,
-      body.scenario !== undefined ? String(body.scenario).trim() : existing.scenario,
-      greetings,
-      exampleDialogues,
-      tags,
-      researchNotes,
-      body.world_id !== undefined ? body.world_id || null : existing.world_id,
-      body.is_pinned !== undefined ? (body.is_pinned ? 1 : 0) : existing.is_pinned,
-      body.is_favorite !== undefined ? (body.is_favorite ? 1 : 0) : existing.is_favorite,
-      body.temperature_override !== undefined
-        ? body.temperature_override === null || body.temperature_override === ''
-          ? null
-          : Number(body.temperature_override)
-        : existing.temperature_override,
-      now,
-      id
+    const updated = await queryOne<CharacterRow>(
+      `UPDATE characters SET
+         name = $1, tagline = $2, avatar = $3, description = $4, personality = $5,
+         speaking_style = $6, scenario = $7, greeting = $8, example_dialogues = $9, tags = $10,
+         research_notes = $11, world_id = $12, is_pinned = $13, is_favorite = $14,
+         temperature_override = $15, updated_at = now()
+       WHERE id = $16 AND user_id = $17
+       RETURNING *`,
+      [
+        name,
+        body.tagline !== undefined ? String(body.tagline).trim() : existing.tagline,
+        newAvatar,
+        body.description !== undefined ? String(body.description).trim() : existing.description,
+        body.personality !== undefined ? String(body.personality).trim() : existing.personality,
+        body.speaking_style !== undefined ? String(body.speaking_style).trim() : existing.speaking_style,
+        body.scenario !== undefined ? String(body.scenario).trim() : existing.scenario,
+        greetings,
+        exampleDialogues,
+        tags,
+        researchNotes,
+        worldId,
+        body.is_pinned !== undefined ? (body.is_pinned ? 1 : 0) : existing.is_pinned,
+        body.is_favorite !== undefined ? (body.is_favorite ? 1 : 0) : existing.is_favorite,
+        body.temperature_override !== undefined
+          ? normalizeTemperature(body.temperature_override)
+          : existing.temperature_override,
+        id,
+        user.id,
+      ]
     );
 
     // Hapus file avatar lama jika pengguna mengganti foto profil karakter
-    if (oldAvatar && newAvatar && oldAvatar !== newAvatar) {
-      replaceUploadAsset(oldAvatar, newAvatar);
+    // deleteUploadAsset tetap menolak menghapus file yang masih dirujuk entitas lain
+    if (oldAvatar && oldAvatar !== newAvatar) {
+      await deleteUploadAsset(oldAvatar, user.id);
     }
 
-    const updated = (db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as unknown) as CharacterRow;
-    return NextResponse.json({ character: formatCharacterRow(updated) });
+    return NextResponse.json({ character: formatCharacterRow(updated!) });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memperbarui karakter.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memperbarui karakter.');
   }
 }
 
-export async function DELETE(
-  _req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(req: NextRequest, context: Ctx) {
   try {
+    const user = await requireUser(req);
     const { id } = await context.params;
-    const db = getDb();
-    const existing = db
-      .prepare('SELECT avatar FROM characters WHERE id = ?')
-      .get(id) as { avatar?: string } | undefined;
+    const existing = await requireOwnedCharacter(user.id, id);
 
-    db.prepare('DELETE FROM memories WHERE character_id = ?').run(id);
-    db.prepare('DELETE FROM characters WHERE id = ?').run(id);
+    // Memori, chat, dan keanggotaan grup ikut terhapus lewat ON DELETE CASCADE
+    await execute('DELETE FROM characters WHERE id = $1 AND user_id = $2', [id, user.id]);
 
-    // Hapus file fisik avatar dari disk jika tidak digunakan oleh entitas lain
-    if (existing?.avatar) {
-      deleteUploadAsset(existing.avatar);
+    if (existing.avatar) {
+      await deleteUploadAsset(existing.avatar, user.id);
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal menghapus karakter.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal menghapus karakter.');
   }
 }

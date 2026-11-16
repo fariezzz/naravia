@@ -1,69 +1,86 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Compass, Users, Globe, Settings, Plus, Menu, X, Sun, Moon } from 'lucide-react';
+import { Compass, Users, Globe, Settings, Plus, Menu, X, Sun, Moon, ShieldCheck, LogOut } from 'lucide-react';
 import CharacterAvatar from './CharacterAvatar';
-import { getClientCache, setClientCache } from '@/lib/clientCache';
 import { useTheme } from '@/lib/ThemeContext';
+import { useAuth } from '@/lib/AuthContext';
+
+const AUTH_PAGES = ['/login', '/register'];
 
 export default function Navbar() {
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
+  const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [userPersona, setUserPersona] = useState<{ display_name: string; avatar: string }>(() => {
-    return (
-      getClientCache<{ display_name: string; avatar: string }>('navbar_persona') || {
-        display_name: 'Kamu',
-        avatar: '',
-      }
-    );
-  });
-
-  const fetchPersona = () => {
-    fetch('/api/persona')
-      .then((r) => r.json())
-      .then((d) => {
-        if (d?.persona) {
-          const item = {
-            display_name: d.persona.display_name || 'Kamu',
-            avatar: d.persona.avatar || '',
-          };
-          setUserPersona(item);
-          setClientCache('navbar_persona', item);
-        }
-      })
-      .catch(() => {});
-  };
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMobileOpen(false);
+    setMenuOpen(false);
   }, [pathname]);
 
+  // Tutup menu akun saat klik di luar area menu
   useEffect(() => {
-    fetchPersona();
-    const handler = () => fetchPersona();
-    window.addEventListener('naravia-persona-updated', handler);
-    return () => window.removeEventListener('naravia-persona-updated', handler);
-  }, []);
+    if (!menuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [menuOpen]);
+
+  const isAuthPage = AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  const displayName = user?.display_name || 'Akun';
+  const isAdmin = user?.role === 'admin';
 
   const navItems = [
     { href: '/', label: 'Karakter', icon: Compass, match: (p: string) => p === '/' || p.startsWith('/characters') || p.startsWith('/chat/') },
     { href: '/groups', label: 'Grup Chat', icon: Users, match: (p: string) => p.startsWith('/groups') },
     { href: '/worlds', label: 'Dunia & Lore', icon: Globe, match: (p: string) => p.startsWith('/worlds') },
     { href: '/settings', label: 'Pengaturan', icon: Settings, match: (p: string) => p.startsWith('/settings') },
+    ...(isAdmin
+      ? [{ href: '/admin', label: 'Admin', icon: ShieldCheck, match: (p: string) => p.startsWith('/admin') }]
+      : []),
   ];
 
-  if (pathname.startsWith('/chat/') || pathname.startsWith('/groups/')) {
-    // Pada halaman percakapan, navbar atas disembunyikan di mobile agar ruang chat 100% full height & header chat menjadi navbar utama
-    // Di desktop (md:flex), navbar tetap tampil
+  const themeButton = (compact: boolean) => (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      className={`${compact ? 'w-8 h-8' : 'w-9 h-9'} rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center text-slate-700 dark:text-slate-300 transition-colors`}
+      title={theme === 'dark' ? 'Ganti ke Mode Terang' : 'Ganti ke Mode Gelap'}
+      aria-label="Ganti Tema"
+    >
+      {theme === 'dark' ? (
+        <Sun className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-amber-400`} />
+      ) : (
+        <Moon className={compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
+      )}
+    </button>
+  );
+
+  // Halaman masuk/daftar hanya menampilkan logo dan pengalih tema
+  if (isAuthPage) {
+    return (
+      <header className="sticky top-0 z-20 w-full bg-white/95 dark:bg-[#0c1220]/95 backdrop-blur border-b border-slate-200 dark:border-slate-800 h-[54px] md:h-[64px] shrink-0">
+        <div className="max-w-6xl mx-auto h-full px-3.5 sm:px-4 flex items-center justify-between">
+          <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">Naravia</span>
+          {themeButton(false)}
+        </div>
+      </header>
+    );
   }
 
   return (
-    <header className={`sticky top-0 z-20 w-full bg-white/95 dark:bg-[#0c1220]/95 backdrop-blur border-b border-slate-200 dark:border-slate-800 h-[54px] md:h-[64px] shrink-0 transition-colors ${
-      pathname.startsWith('/chat/') || pathname.startsWith('/groups/') ? 'hidden md:block' : 'block'
-    }`}>
+    <header
+      className={`sticky top-0 z-20 w-full bg-white/95 dark:bg-[#0c1220]/95 backdrop-blur border-b border-slate-200 dark:border-slate-800 h-[54px] md:h-[64px] shrink-0 transition-colors ${
+        pathname.startsWith('/chat/') || pathname.startsWith('/groups/') ? 'hidden md:block' : 'block'
+      }`}
+    >
       <div className="max-w-6xl mx-auto h-full px-3.5 sm:px-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-6">
           <Link
@@ -96,15 +113,7 @@ export default function Navbar() {
         </div>
 
         <div className="hidden md:flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="w-9 h-9 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center text-slate-700 dark:text-slate-300 transition-colors"
-            title={theme === 'dark' ? 'Ganti ke Mode Terang' : 'Ganti ke Mode Gelap'}
-            aria-label="Toggle Theme"
-          >
-            {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
-          </button>
+          {themeButton(false)}
 
           <Link
             href="/characters/new"
@@ -114,33 +123,60 @@ export default function Navbar() {
             <span>Buat Karakter</span>
           </Link>
 
-          <Link
-            href="/settings"
-            title={`Profil Persona: ${userPersona.display_name}`}
-            className="h-[36px] pl-1.5 pr-3 rounded-full border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60 inline-flex items-center gap-2 transition-colors"
-          >
-            <CharacterAvatar
-              name={userPersona.display_name}
-              avatar={userPersona.avatar}
-              size="xs"
-            />
-            <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 max-w-[110px] truncate">
-              {userPersona.display_name}
-            </span>
-          </Link>
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="h-[36px] pl-1.5 pr-3 rounded-full border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60 inline-flex items-center gap-2 transition-colors"
+            >
+              <CharacterAvatar name={displayName} avatar={user?.avatar || ''} size="xs" />
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 max-w-[110px] truncate">
+                {displayName}
+              </span>
+            </button>
+
+            {menuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-[44px] w-56 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1729] shadow-lg p-1.5"
+              >
+                <div className="px-2.5 py-2 border-b border-slate-100 dark:border-slate-800 mb-1">
+                  <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">{displayName}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{user?.email}</p>
+                </div>
+                <Link
+                  href="/settings"
+                  className="h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Pengaturan</span>
+                </Link>
+                {isAdmin && (
+                  <Link
+                    href="/admin"
+                    className="h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>Panel Admin</span>
+                  </Link>
+                )}
+                <button
+                  type="button"
+                  onClick={() => logout()}
+                  className="w-full h-8 px-2.5 rounded-lg text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center gap-2"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Keluar</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex md:hidden items-center gap-1.5">
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-800 inline-flex items-center justify-center text-slate-700 dark:text-slate-300"
-            title="Toggle Tema"
-            aria-label="Toggle Tema"
-          >
-            {theme === 'dark' ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5" />}
-          </button>
-
+          {themeButton(true)}
           <Link
             href="/characters/new"
             className="h-8 px-2.5 rounded-lg bg-indigo-600 text-white text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap"
@@ -148,16 +184,8 @@ export default function Navbar() {
             <Plus className="w-3.5 h-3.5" />
             <span>Buat Karakter</span>
           </Link>
-          <Link
-            href="/settings"
-            aria-label="Profil Pengguna"
-            className="rounded-full"
-          >
-            <CharacterAvatar
-              name={userPersona.display_name}
-              avatar={userPersona.avatar}
-              size="sm"
-            />
+          <Link href="/settings" aria-label="Pengaturan Akun" className="rounded-full">
+            <CharacterAvatar name={displayName} avatar={user?.avatar || ''} size="sm" />
           </Link>
           <button
             type="button"
@@ -191,6 +219,14 @@ export default function Navbar() {
                 </Link>
               );
             })}
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="h-9 px-3 rounded-lg text-xs font-medium inline-flex items-center gap-2 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+            >
+              <LogOut className="w-4 h-4 shrink-0" />
+              <span>Keluar</span>
+            </button>
           </nav>
         </div>
       )}

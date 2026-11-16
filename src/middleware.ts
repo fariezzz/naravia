@@ -1,38 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
- * Middleware Fase 4 (Opsional):
- * Di lokal (tanpa NARAVIA_ACCESS_KEY), aplikasi terbuka langsung tanpa login.
- * Jika nanti di-deploy ke VM dan variabel environment NARAVIA_ACCESS_KEY diisi,
- * pengguna cukup memasukkan kunci akses sekali untuk menyimpan sesi cookie.
+ * Middleware berjalan di Edge runtime (tanpa akses database), jadi hanya memeriksa
+ * keberadaan cookie sesi untuk mengalihkan halaman. Validasi sesi yang sesungguhnya
+ * (token, masa berlaku, status akun, peran admin) dilakukan di setiap API route.
  */
+const SESSION_COOKIE = 'naravia_session';
+const PUBLIC_PAGES = ['/login', '/register'];
+const PUBLIC_API = ['/api/auth/login', '/api/auth/register', '/api/auth/config', '/api/auth/logout', '/api/health'];
+
 export function middleware(req: NextRequest) {
-  const requiredKey = (process.env.NARAVIA_ACCESS_KEY || '').trim();
-  if (!requiredKey) {
-    return NextResponse.next();
-  }
-
   const { pathname } = req.nextUrl;
-  if (
-    pathname.startsWith('/unlock') ||
-    pathname.startsWith('/api/unlock') ||
-    pathname.startsWith('/_next') ||
-    pathname.startsWith('/icon.svg') ||
-    pathname.startsWith('/manifest.json')
-  ) {
+  const hasSession = Boolean(req.cookies.get(SESSION_COOKIE)?.value);
+
+  if (pathname.startsWith('/api/')) {
+    if (PUBLIC_API.includes(pathname)) return NextResponse.next();
+    if (!hasSession) {
+      return NextResponse.json({ error: 'Silakan masuk terlebih dahulu.' }, { status: 401 });
+    }
     return NextResponse.next();
   }
 
-  const cookieKey = req.cookies.get('naravia_access_token')?.value;
-  if (cookieKey === requiredKey) {
-    return NextResponse.next();
+  const isPublicPage = PUBLIC_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  if (isPublicPage) return NextResponse.next();
+
+  if (!hasSession) {
+    const loginUrl = new URL('/login', req.url);
+    if (pathname !== '/') loginUrl.searchParams.set('next', pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
-  const unlockUrl = req.nextUrl.clone();
-  unlockUrl.pathname = '/unlock';
-  return NextResponse.redirect(unlockUrl);
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|manifest.json|robots.txt).*)'],
 };

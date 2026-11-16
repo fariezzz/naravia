@@ -1,4 +1,4 @@
-import { getSettingsMap, recordTokenUsage } from './db';
+import { assertTokenBudget, getSettingsMap, recordTokenUsage } from './store';
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
@@ -6,6 +6,8 @@ export interface LLMMessage {
 }
 
 export interface LLMCallOptions {
+  // Pemilik permintaan: menentukan setelan pribadi, kuota harian, dan pencatatan pemakaian token
+  userId: string;
   temperature?: number;
   maxTokens?: number;
   characterId?: string | null;
@@ -29,9 +31,10 @@ function estimateTokens(text: string): number {
 
 export async function generateLLMResponse(
   messages: LLMMessage[],
-  options: LLMCallOptions = {}
+  options: LLMCallOptions
 ): Promise<LLMResponse> {
-  const settings = getSettingsMap();
+  await assertTokenBudget(options.userId);
+  const settings = await getSettingsMap(options.userId);
   const rawProvider = (settings.provider || 'auto').toLowerCase();
   const isResearchAction = options.actionType === 'research';
 
@@ -104,7 +107,8 @@ export async function generateLLMResponse(
     });
   }
 
-  recordTokenUsage({
+  await recordTokenUsage({
+    userId: options.userId,
     characterId: options.characterId || null,
     chatId: options.chatId || null,
     actionType: options.actionType || 'chat',
@@ -640,9 +644,10 @@ export function cleanCharacterOutput(raw: string, characterName?: string): strin
  */
 export async function* streamLLMResponse(
   messages: LLMMessage[],
-  options: LLMCallOptions & { signal?: AbortSignal } = {}
+  options: LLMCallOptions & { signal?: AbortSignal }
 ): AsyncGenerator<string, { fullText: string; modelUsed: string }, void> {
-  const settings = getSettingsMap();
+  await assertTokenBudget(options.userId);
+  const settings = await getSettingsMap(options.userId);
   const rawProvider = (settings.provider || 'auto').toLowerCase();
   const baseUrl = (
     settings.llm_base_url ||
@@ -864,7 +869,8 @@ export async function* streamLLMResponse(
     }
   }
 
-  recordTokenUsage({
+  await recordTokenUsage({
+    userId: options.userId,
     characterId: options.characterId || null,
     chatId: options.chatId || null,
     actionType: options.actionType || 'chat',

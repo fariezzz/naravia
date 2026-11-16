@@ -1,87 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth';
+import { CharacterRow, ChatRow, execute, MessageRow, query, queryOne } from '@/lib/db';
+import { formatCharacterRow, formatMessageRow, stripOwner } from '@/lib/format';
+import { handleApiError, jsonError, readJson } from '@/lib/http';
+import { generateLLMResponse } from '@/lib/llm';
+import { enforceLlmRateLimit } from '@/lib/rateLimit';
 import {
-  CharacterRow,
-  ChatRow,
-  formatCharacterRow,
+  formatPersona,
   getAllPersonas,
-  getDb,
   getDefaultPersona,
   getPersonaById,
-  getSettingsMap,
-  MessageRow,
-} from '@/lib/db';
-import { generateLLMResponse } from '@/lib/llm';
+  getUserSettings,
+  requireOwnedChat,
+} from '@/lib/store';
 
-export async function GET(
-  _req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export const runtime = 'nodejs';
+
+type Ctx = { params: Promise<{ id: string }> };
+
+export async function GET(req: NextRequest, context: Ctx) {
   try {
+    const user = await requireUser(req);
     const { id } = await context.params;
-    const db = getDb();
+    const chat = await requireOwnedChat(user.id, id);
 
-    const chat = (db.prepare('SELECT * FROM chats WHERE id = ?').get(id) as unknown) as ChatRow | undefined;
-    if (!chat) {
-      return NextResponse.json({ error: 'Percakapan tidak ditemukan.' }, { status: 404 });
-    }
+    const character = await queryOne<CharacterRow & { world_name?: string | null }>(
+      `SELECT c.*, w.name AS world_name
+       FROM characters c
+       LEFT JOIN worlds w ON c.world_id = w.id
+       WHERE c.id = $1 AND c.user_id = $2`,
+      [chat.character_id, user.id]
+    );
+    if (!character) return jsonError('Karakter untuk percakapan ini tidak ditemukan.', 404);
 
-    const character = (db
-      .prepare(`
-        SELECT c.*, w.name as world_name
-        FROM characters c
-        LEFT JOIN worlds w ON c.world_id = w.id
-        WHERE c.id = ?
-      `)
-      .get(chat.character_id) as unknown) as (CharacterRow & { world_name?: string | null }) | undefined;
-
-    if (!character) {
-      return NextResponse.json({ error: 'Karakter untuk percakapan ini tidak ditemukan.' }, { status: 404 });
-    }
-
-    const rawMessages = (db
-      .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC')
-      .all(id) as unknown) as MessageRow[];
-
-    const messages = rawMessages.map((m) => {
-      let alternatives: string[] = [];
-      try {
-        alternatives = JSON.parse(m.alternatives || '[]');
-      } catch {
-        alternatives = [m.content];
-      }
-      if (alternatives.length === 0) alternatives = [m.content];
-      return {
-        ...m,
-        alternatives,
-        is_pinned_memory: Boolean(m.is_pinned_memory),
-      };
-    });
-
-    const memories = db
-      .prepare('SELECT * FROM memories WHERE character_id = ? OR character_id IS NULL ORDER BY created_at DESC')
-      .all(chat.character_id);
-
-    const otherChats = db
-      .prepare('SELECT id, title, updated_at FROM chats WHERE character_id = ? ORDER BY updated_at DESC')
-      .all(chat.character_id);
+    const [rawMessages, memories, otherChats, personas, settings] = await Promise.all([
+      query<MessageRow>('SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC', [id]),
+      query(
+        `SELECT * FROM memories WHERE user_id = $2 AND (character_id = $1 OR character_id IS NULL)
+         ORDER BY created_at DESC`,
+        [chat.character_id, user.id]
+      ),
+      query(
+        'SELECT id, title, updated_at FROM chats WHERE character_id = $1 AND user_id = $2 ORDER BY updated_at DESC',
+        [chat.character_id, user.id]
+      ),
+      getAllPersonas(user.id),
+      getUserSettings(user.id),
+    ]);
 
     const activePersona = chat.persona_id
-      ? getPersonaById(chat.persona_id)
-      : getDefaultPersona();
-    const personas = getAllPersonas().map((p) => ({
-      ...p,
-      is_default: Boolean(p.is_default),
-    }));
+      ? await getPersonaById(user.id, chat.persona_id)
+      : await getDefaultPersona(user.id);
 
-    const settings = getSettingsMap();
     const resolvedChat = {
-      ...chat,
+      ...stripOwner(chat),
       persona_id: chat.persona_id || activePersona?.id || null,
       use_latest_persona: Boolean(chat.use_latest_persona),
-      temperature:
-        chat.temperature ??
-        character.temperature_override ??
-        (parseFloat(settings.temperature || '0.9') || 0.9),
+      temperature: chat.temperature ?? character.temperature_override ?? (parseFloat(settings.temperature || '0.9') || 0.9),
       max_tokens: chat.max_tokens ?? (parseInt(settings.max_tokens || '1024', 10) || 1024),
       reply_style: chat.reply_style || settings.default_reply_style || 'sedang',
     };
@@ -89,11 +64,11 @@ export async function GET(
     return NextResponse.json({
       chat: resolvedChat,
       character: formatCharacterRow(character),
-      messages,
-      memories,
+      messages: rawMessages.map(formatMessageRow),
+      memories: memories.map(stripOwner),
       otherChats,
-      activePersona,
-      personas,
+      activePersona: formatPersona(activePersona),
+      personas: personas.map(formatPersona),
       defaultSettings: {
         temperature: settings.temperature || '0.9',
         max_tokens: settings.max_tokens || '1024',
@@ -101,43 +76,30 @@ export async function GET(
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memuat ruang percakapan.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memuat ruang percakapan.');
   }
 }
 
-export async function PATCH(
-  req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(req: NextRequest, context: Ctx) {
   try {
+    const user = await requireUser(req);
     const { id } = await context.params;
-    const body = await req.json();
-    const db = getDb();
+    const body = await readJson(req);
+    const existing = await requireOwnedChat(user.id, id);
 
-    const existing = (db.prepare('SELECT * FROM chats WHERE id = ?').get(id) as unknown) as ChatRow | undefined;
-    if (!existing) {
-      return NextResponse.json({ error: 'Percakapan tidak ditemukan.' }, { status: 404 });
-    }
-
-    // Jika user memicu pembuatan ringkasan percakapan (Fase 2)
+    // Ringkasan percakapan manual
     if (body.action === 'summarize') {
-      const msgs = (db
-        .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC')
-        .all(id) as unknown) as MessageRow[];
-
+      enforceLlmRateLimit(user.id);
+      const msgs = await query<MessageRow>('SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC', [id]);
       if (msgs.length < 4) {
-        return NextResponse.json(
-          { error: 'Percakapan masih terlalu singkat untuk diringkas (minimal 4 pesan).' },
-          { status: 400 }
-        );
+        return jsonError('Percakapan masih terlalu singkat untuk diringkas (minimal 4 pesan).', 400);
       }
 
-      const character = (db
-        .prepare('SELECT name FROM characters WHERE id = ?')
-        .get(existing.character_id) as unknown) as { name: string } | undefined;
+      const character = await queryOne<{ name: string }>(
+        'SELECT name FROM characters WHERE id = $1 AND user_id = $2',
+        [existing.character_id, user.id]
+      );
       const charName = character?.name || 'Karakter';
-
       const transcript = msgs
         .map((m) => `${m.role === 'character' ? charName : 'Pengguna'}: ${m.content}`)
         .join('\n\n')
@@ -153,6 +115,7 @@ export async function PATCH(
           { role: 'user', content: transcript },
         ],
         {
+          userId: user.id,
           temperature: 0.4,
           maxTokens: 500,
           characterId: existing.character_id,
@@ -162,15 +125,15 @@ export async function PATCH(
       );
 
       const lastMsgId = msgs[msgs.length - 1]?.id || null;
-      db.prepare(`
-        UPDATE chats SET summary = ?, summarized_until_msg_id = ?, updated_at = ? WHERE id = ?
-      `).run(sumRes.text, lastMsgId, new Date().toISOString(), id);
-
-      const updated = db.prepare('SELECT * FROM chats WHERE id = ?').get(id);
-      return NextResponse.json({ chat: updated, summary: sumRes.text });
+      const updated = await queryOne<ChatRow>(
+        `UPDATE chats SET summary = $1, summarized_until_msg_id = $2, updated_at = now()
+         WHERE id = $3 AND user_id = $4 RETURNING *`,
+        [sumRes.text, lastMsgId, id, user.id]
+      );
+      return NextResponse.json({ chat: stripOwner(updated!), summary: sumRes.text });
     }
 
-    const title = body.title !== undefined ? String(body.title).trim() : existing.title;
+    const title = body.title !== undefined ? String(body.title).trim().slice(0, 120) : existing.title;
     const summary = body.summary !== undefined ? String(body.summary).trim() : existing.summary;
     const temperature =
       body.temperature !== undefined
@@ -185,64 +148,61 @@ export async function PATCH(
           : Number(body.max_tokens)
         : existing.max_tokens;
     const replyStyle = body.reply_style !== undefined ? String(body.reply_style) : existing.reply_style;
-    const personaId =
-      body.persona_id !== undefined
-        ? body.persona_id
-          ? String(body.persona_id)
-          : null
-        : existing.persona_id || null;
-    const selectedPersonaObj = personaId ? getPersonaById(personaId) : null;
-    const personaSnapshot = selectedPersonaObj
-      ? JSON.stringify(selectedPersonaObj)
-      : existing.persona_snapshot;
+
+    // Persona hanya boleh milik pengguna sendiri; ID asing diabaikan
+    let personaId = existing.persona_id || null;
+    let personaSnapshot = existing.persona_snapshot;
+    if (body.persona_id !== undefined) {
+      if (body.persona_id) {
+        const owned = await queryOne(
+          'SELECT * FROM user_personas WHERE id = $1 AND user_id = $2',
+          [String(body.persona_id), user.id]
+        );
+        if (!owned) return jsonError('Persona tidak ditemukan.', 404);
+        personaId = owned.id;
+        personaSnapshot = JSON.stringify(stripOwner(owned));
+      } else {
+        personaId = null;
+      }
+    }
     const useLatestPersona =
       body.use_latest_persona !== undefined ? (body.use_latest_persona ? 1 : 0) : existing.use_latest_persona;
 
-    db.prepare(`
-      UPDATE chats SET
-        title = ?,
-        summary = ?,
-        temperature = ?,
-        max_tokens = ?,
-        reply_style = ?,
-        persona_id = ?,
-        persona_snapshot = ?,
-        use_latest_persona = ?,
-        updated_at = ?
-      WHERE id = ?
-    `).run(
-      title || existing.title,
-      summary,
-      temperature,
-      maxTokens,
-      replyStyle,
-      personaId,
-      personaSnapshot,
-      useLatestPersona,
-      new Date().toISOString(),
-      id
+    const updated = await queryOne<ChatRow>(
+      `UPDATE chats SET
+         title = $1, summary = $2, temperature = $3, max_tokens = $4, reply_style = $5,
+         persona_id = $6, persona_snapshot = $7, use_latest_persona = $8, updated_at = now()
+       WHERE id = $9 AND user_id = $10
+       RETURNING *`,
+      [
+        title || existing.title,
+        summary,
+        temperature,
+        maxTokens,
+        replyStyle,
+        personaId,
+        personaSnapshot,
+        useLatestPersona,
+        id,
+        user.id,
+      ]
     );
 
-    const updated = db.prepare('SELECT * FROM chats WHERE id = ?').get(id);
-    const activePersona = personaId ? getPersonaById(personaId) : getDefaultPersona();
-    return NextResponse.json({ chat: updated, activePersona });
+    const activePersona = personaId ? await getPersonaById(user.id, personaId) : await getDefaultPersona(user.id);
+    return NextResponse.json({ chat: stripOwner(updated!), activePersona: formatPersona(activePersona) });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memperbarui pengaturan percakapan.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memperbarui pengaturan percakapan.');
   }
 }
 
-export async function DELETE(
-  _req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(req: NextRequest, context: Ctx) {
   try {
+    const user = await requireUser(req);
     const { id } = await context.params;
-    const db = getDb();
-    db.prepare('DELETE FROM chats WHERE id = ?').run(id);
+    await requireOwnedChat(user.id, id);
+    await execute('DELETE FROM chats WHERE id = $1 AND user_id = $2', [id, user.id]);
     return NextResponse.json({ success: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal menghapus percakapan.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal menghapus percakapan.');
   }
 }

@@ -1,4 +1,5 @@
-import { getDb, LoreEntryRow, WorldRow } from './db';
+import { LoreEntryRow, query, queryOne, WorldRow } from './db';
+import { parseJsonSafe } from './format';
 
 export interface ActiveLoreResult {
   world: WorldRow | null;
@@ -11,43 +12,35 @@ export interface ActiveLoreResult {
 }
 
 /**
- * Mengambil informasi Dunia dan entri Lorebook yang kata kuncinya
+ * Mengambil informasi Dunia milik pengguna dan entri Lorebook yang kata kuncinya
  * muncul di dalam teks percakapan terakhir.
  */
-export function getRelevantLore(
+export async function getRelevantLore(
+  userId: string,
   worldId: string | null | undefined,
   recentConversationText: string
-): ActiveLoreResult {
+): Promise<ActiveLoreResult> {
   if (!worldId) {
     return { world: null, matchedEntries: [] };
   }
 
-  const db = getDb();
-  const world = (db
-    .prepare('SELECT * FROM worlds WHERE id = ?')
-    .get(worldId) as unknown) as WorldRow | undefined;
-
+  const world = await queryOne<WorldRow>('SELECT * FROM worlds WHERE id = $1 AND user_id = $2', [worldId, userId]);
   if (!world) {
     return { world: null, matchedEntries: [] };
   }
 
-  const entries = (db
-    .prepare('SELECT * FROM lore_entries WHERE world_id = ? AND enabled = 1')
-    .all(worldId) as unknown) as LoreEntryRow[];
+  const entries = await query<LoreEntryRow>(
+    'SELECT * FROM lore_entries WHERE world_id = $1 AND enabled = 1',
+    [worldId]
+  );
 
   const normalizedHaystack = (recentConversationText || '').toLowerCase();
   const matchedEntries: ActiveLoreResult['matchedEntries'] = [];
 
   for (const entry of entries) {
-    let keywords: string[] = [];
-    try {
-      keywords = JSON.parse(entry.keywords || '[]');
-    } catch {
-      keywords = [];
-    }
-
+    const keywords = parseJsonSafe<string[]>(entry.keywords, []);
     const isMatched = keywords.some((kw) => {
-      const cleanedKw = kw.trim().toLowerCase();
+      const cleanedKw = String(kw || '').trim().toLowerCase();
       return cleanedKw.length > 0 && normalizedHaystack.includes(cleanedKw);
     });
 
@@ -61,8 +54,5 @@ export function getRelevantLore(
     }
   }
 
-  return {
-    world,
-    matchedEntries,
-  };
+  return { world, matchedEntries };
 }

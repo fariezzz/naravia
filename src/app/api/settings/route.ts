@@ -1,311 +1,129 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, getSettingsMap, updateSettingsMap } from '@/lib/db';
-import { generateLLMResponse } from '@/lib/llm';
 import { cleanupOrphanedUploads } from '@/lib/assets';
-import { performOptionalWebSearch } from '@/lib/research';
+import { requireUser } from '@/lib/auth';
+import { withTransaction } from '@/lib/db';
+import { getClientIp, handleApiError, jsonError, readJson } from '@/lib/http';
+import { enforceRateLimit } from '@/lib/rateLimit';
+import { USER_SETTING_DEFAULTS } from '@/lib/settingsKeys';
+import {
+  getEffectiveDailyBudget,
+  getTodayTokenUsage,
+  getUserSettings,
+  logAudit,
+  updateUserSettings,
+} from '@/lib/store';
 
-export async function GET() {
-  try {
-    const settings = getSettingsMap();
-    const rawKey =
-      settings.llm_api_key ||
-      settings.google_api_key ||
-      process.env.LLM_API_KEY ||
-      process.env.GOOGLE_AI_STUDIO_API_KEY ||
-      process.env.OPENAI_API_KEY ||
-      process.env.GEMINI_API_KEY ||
-      '';
-    const hasKey = Boolean(rawKey.trim());
+export const runtime = 'nodejs';
 
-    const resolvedBaseUrl =
-      settings.llm_base_url ||
-      process.env.LLM_BASE_URL ||
-      process.env.OPENAI_BASE_URL ||
-      'https://generativelanguage.googleapis.com/v1beta';
-
-    const rawResearchKey =
-      settings.research_llm_api_key ||
-      process.env.RESEARCH_LLM_API_KEY ||
-      '';
-    const hasResearchKey = Boolean(rawResearchKey.trim());
-
-    return NextResponse.json({
-      settings: {
-        ...settings,
-        llm_base_url: resolvedBaseUrl,
-        has_api_key: hasKey ? 'true' : 'false',
-        llm_api_key_masked: hasKey ? maskKey(rawKey) : '',
-        has_research_api_key: hasResearchKey ? 'true' : 'false',
-        research_llm_api_key_masked: hasResearchKey ? maskKey(rawResearchKey) : '',
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memuat pengaturan.';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+// Setelan pribadi pengguna (parameter percakapan). Setelan provider AI dikelola admin di /api/admin/settings.
+function clampNumber(raw: unknown, min: number, max: number, fallback: string): string {
+  const n = Number(raw);
+  if (raw === '' || raw === null || raw === undefined || !Number.isFinite(n)) return fallback;
+  return String(Math.min(max, Math.max(min, n)));
 }
 
-function maskKey(k: string): string {
-  const trimmed = k.trim();
-  if (trimmed.length <= 8) return '••••••••';
-  return `${trimmed.slice(0, 4)}••••••••${trimmed.slice(-4)}`;
+function clampInt(raw: unknown, min: number, max: number, fallback: string): string {
+  return String(Math.round(Number(clampNumber(raw, min, max, fallback))));
+}
+
+function sanitizeUserSettings(body: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (body.temperature !== undefined) {
+    out.temperature = clampNumber(body.temperature, 0, 2, USER_SETTING_DEFAULTS.temperature);
+  }
+  if (body.max_tokens !== undefined) {
+    out.max_tokens = clampInt(body.max_tokens, 64, 8192, USER_SETTING_DEFAULTS.max_tokens);
+  }
+  if (body.history_limit !== undefined) {
+    out.history_limit = clampInt(body.history_limit, 4, 100, USER_SETTING_DEFAULTS.history_limit);
+  }
+  if (body.auto_summarize_threshold !== undefined) {
+    out.auto_summarize_threshold = clampInt(
+      body.auto_summarize_threshold,
+      16,
+      500,
+      USER_SETTING_DEFAULTS.auto_summarize_threshold
+    );
+  }
+  if (body.default_reply_style !== undefined) {
+    const style = String(body.default_reply_style);
+    out.default_reply_style = ['pendek', 'sedang', 'panjang'].includes(style) ? style : 'sedang';
+  }
+  if (body.auto_extract_memory !== undefined) {
+    out.auto_extract_memory = String(body.auto_extract_memory) === 'true' ? 'true' : 'false';
+  }
+  return out;
+}
+
+async function buildResponse(userId: string) {
+  const [settings, budget, usage] = await Promise.all([
+    getUserSettings(userId),
+    getEffectiveDailyBudget(userId),
+    getTodayTokenUsage(userId),
+  ]);
+  return NextResponse.json({
+    settings,
+    quota: {
+      daily_budget: budget,
+      today_used: usage.used,
+      remaining: budget > 0 ? Math.max(0, budget - usage.used) : null,
+    },
+  });
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const user = await requireUser(req);
+    return buildResponse(user.id);
+  } catch (err) {
+    return handleApiError(err, 'Gagal memuat pengaturan.');
+  }
 }
 
 export async function PUT(req: NextRequest) {
   try {
-    const body = await req.json();
-    const allowedKeys = [
-      'provider',
-      'llm_base_url',
-      'llm_api_key',
-      'model',
-      'research_llm_base_url',
-      'research_llm_api_key',
-      'research_model',
-      'google_api_key',
-      'ollama_base_url',
-      'ollama_model',
-      'ollama_api_key',
-      'temperature',
-      'max_tokens',
-      'default_reply_style',
-      'history_limit',
-      'auto_summarize_threshold',
-      'auto_extract_memory',
-      'daily_token_budget',
-      'search_provider',
-      'search_api_key',
-    ];
-
-    const updates: Record<string, string> = {};
-    const keyFields = new Set(['llm_api_key', 'research_llm_api_key', 'google_api_key', 'search_api_key', 'ollama_api_key']);
-
-    for (const key of allowedKeys) {
-      if (body[key] !== undefined) {
-        const val = String(body[key]).trim();
-        if (keyFields.has(key)) {
-          // Jangan timpa kunci API yang sudah tersimpan jika kolom dikirim kosong atau masih bermasker (kecuali user eksplisit meminta hapus dengan clear_api_key)
-          if (val.includes('••••') || (val === '' && !body.clear_api_key)) {
-            continue;
-          }
-        }
-        updates[key] = val;
-      }
-    }
-
-    if (updates.temperature !== undefined && (!updates.temperature || isNaN(Number(updates.temperature)))) {
-      updates.temperature = '0.9';
-    }
-    if (updates.max_tokens !== undefined && (!updates.max_tokens || isNaN(Number(updates.max_tokens)))) {
-      updates.max_tokens = '1024';
-    }
-    if (updates.history_limit !== undefined && (!updates.history_limit || isNaN(Number(updates.history_limit)))) {
-      updates.history_limit = '20';
-    }
-
-    // Jaga sinkronisasi backward-compatibility hanya jika llm_api_key benar-benar diubah
-    if (updates.llm_api_key !== undefined) {
-      updates.google_api_key = updates.llm_api_key;
-    }
-
-    updateSettingsMap(updates);
-
-    if (updates.llm_base_url !== undefined) {
-      syncEnvLocalKey('LLM_BASE_URL', updates.llm_base_url);
-      process.env.LLM_BASE_URL = updates.llm_base_url;
-    }
-    if (updates.llm_api_key !== undefined) {
-      syncEnvLocalKey('LLM_API_KEY', updates.llm_api_key);
-      syncEnvLocalKey('GOOGLE_AI_STUDIO_API_KEY', updates.llm_api_key);
-      process.env.LLM_API_KEY = updates.llm_api_key;
-      process.env.GOOGLE_AI_STUDIO_API_KEY = updates.llm_api_key;
-    }
-    if (updates.model !== undefined) {
-      syncEnvLocalKey('LLM_MODEL', updates.model);
-      process.env.LLM_MODEL = updates.model;
-    }
-
-    const latest = getSettingsMap();
-    const rawKey =
-      latest.llm_api_key ||
-      latest.google_api_key ||
-      process.env.LLM_API_KEY ||
-      process.env.GOOGLE_AI_STUDIO_API_KEY ||
-      '';
-    const hasKey = Boolean(rawKey.trim());
-
-    return NextResponse.json({
-      settings: {
-        ...latest,
-        has_api_key: hasKey ? 'true' : 'false',
-        llm_api_key_masked: hasKey ? maskKey(rawKey) : '',
-      },
-    });
+    const user = await requireUser(req);
+    const body = await readJson(req);
+    await updateUserSettings(user.id, sanitizeUserSettings(body));
+    return buildResponse(user.id);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal menyimpan pengaturan.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal menyimpan pengaturan.');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const user = await requireUser(req);
+    const body = await readJson(req);
 
-    if (body.action === 'fetch_models') {
-      const currentSettings = getSettingsMap();
-      const rawBaseUrl = String(
-        body.baseUrl ||
-          currentSettings.llm_base_url ||
-          process.env.LLM_BASE_URL ||
-          ''
-      )
-        .trim()
-        .replace(/\/+$/, '');
-
-      if (!rawBaseUrl) {
-        return NextResponse.json({ error: 'Base URL belum diisi.' }, { status: 400 });
-      }
-
-      const rawKey =
-        body.apiKey && !String(body.apiKey).includes('••••')
-          ? String(body.apiKey).trim()
-          : currentSettings.llm_api_key ||
-            currentSettings.google_api_key ||
-            process.env.LLM_API_KEY ||
-            process.env.GOOGLE_AI_STUDIO_API_KEY ||
-            '';
-
-      let modelsEndpoint = rawBaseUrl;
-      if (!modelsEndpoint.endsWith('/models')) {
-        if (modelsEndpoint.endsWith('/v1') || modelsEndpoint.endsWith('/openai')) {
-          modelsEndpoint = `${modelsEndpoint}/models`;
-        } else {
-          modelsEndpoint = `${modelsEndpoint}/v1/models`;
-        }
-      }
-
-      const headers: Record<string, string> = {};
-      if (rawKey) headers['Authorization'] = `Bearer ${rawKey}`;
-
-      const res = await fetch(modelsEndpoint, { headers });
-      if (!res.ok) {
-        return NextResponse.json(
-          { error: `Gagal memuat daftar model dari ${modelsEndpoint} (${res.status}).` },
-          { status: 400 }
-        );
-      }
-
-      const data = await res.json();
-      const list = Array.isArray(data?.data)
-        ? data.data.map((m: { id?: string; name?: string }) => m.id || m.name).filter(Boolean)
-        : Array.isArray(data?.models)
-        ? data.models.map((m: { name?: string; id?: string }) => (m.name || m.id || '').replace(/^models\//, '')).filter(Boolean)
-        : [];
-
-      return NextResponse.json({ models: list });
-    }
-
-    if (body.action === 'test_connection') {
-      const res = await generateLLMResponse(
-        [
-          { role: 'system', content: 'Balas dengan satu kalimat singkat dalam Bahasa Indonesia.' },
-          { role: 'user', content: 'Tes koneksi Naravia. Apakah kamu siap?' },
-        ],
-        {
-          temperature: 0.5,
-          maxTokens: 80,
-          actionType: 'preview',
-        }
-      );
-
-      return NextResponse.json({
-        success: true,
-        reply: res.text,
-        modelUsed: res.modelUsed,
-        providerUsed: res.providerUsed,
-      });
-    }
-
-    if (body.action === 'test_search') {
-      const query = String(body.query || 'Hatsune Miku karakter vocaloid').trim();
-      const currentSettings = getSettingsMap();
-      const provider = (currentSettings.search_provider || 'model').toLowerCase();
-
-      if (provider === 'model') {
-        return NextResponse.json({
-          success: true,
-          provider,
-          snippets: '',
-          sources: [],
-          info: 'Penyedia pencarian masih diatur ke "Pengetahuan Model" (tanpa web search eksternal). Pilih Tavily atau Brave dan isi API Key untuk menguji pencarian web asli.',
-        });
-      }
-
-      const result = await performOptionalWebSearch(query);
-      if (!result.snippets && result.sources.length === 0) {
-        return NextResponse.json(
-          { error: `Pencarian via ${provider} gagal atau tidak mengembalikan hasil. Periksa kembali API Key Anda.` },
-          { status: 400 }
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-        provider,
-        query,
-        sources: result.sources,
-        snippetsPreview: result.snippets.slice(0, 1500),
-      });
-    }
-
+    // Hapus seluruh data milik akun ini saja. Riwayat token tetap disimpan agar kuota harian tidak bisa direset.
     if (body.action === 'reset_all') {
-      const db = getDb();
-      db.exec(`
-        DELETE FROM messages;
-        DELETE FROM chats;
-        DELETE FROM group_messages;
-        DELETE FROM group_chat_members;
-        DELETE FROM group_chats;
-        DELETE FROM memories;
-        DELETE FROM lore_entries;
-        DELETE FROM worlds;
-        DELETE FROM characters;
-        DELETE FROM token_usage;
-      `);
-      // Bersihkan seluruh file upload yang tidak lagi terikat ke entitas database aktif
-      cleanupOrphanedUploads();
+      enforceRateLimit(`reset-all:${user.id}`, 3, 60 * 60_000);
+      await withTransaction(async (client) => {
+        await client.query('DELETE FROM group_chats WHERE user_id = $1', [user.id]);
+        await client.query('DELETE FROM chats WHERE user_id = $1', [user.id]);
+        await client.query('DELETE FROM memories WHERE user_id = $1', [user.id]);
+        await client.query('DELETE FROM characters WHERE user_id = $1', [user.id]);
+        await client.query('DELETE FROM worlds WHERE user_id = $1', [user.id]);
+      });
+      const deletedFiles = await cleanupOrphanedUploads(user.id);
+      await logAudit({
+        userId: user.id,
+        actorEmail: user.email,
+        action: 'hapus_semua_data',
+        detail: `${deletedFiles} file dibersihkan`,
+        ip: getClientIp(req),
+      });
       return NextResponse.json({ success: true });
     }
 
     if (body.action === 'cleanup_assets') {
-      const deletedCount = cleanupOrphanedUploads();
+      const deletedCount = await cleanupOrphanedUploads(user.id);
       return NextResponse.json({ success: true, deletedCount });
     }
 
-    return NextResponse.json({ error: 'Aksi tidak dikenali.' }, { status: 400 });
+    return jsonError('Aksi tidak dikenali.', 400);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal menjalankan aksi pengaturan.';
-    return NextResponse.json({ error: message }, { status: 400 });
-  }
-}
-
-function syncEnvLocalKey(key: string, value: string) {
-  try {
-    const envPath = path.join(process.cwd(), '.env.local');
-    let content = '';
-    if (fs.existsSync(envPath)) {
-      content = fs.readFileSync(envPath, 'utf8');
-    }
-    const regex = new RegExp(`^${key}=.*$`, 'm');
-    if (regex.test(content)) {
-      content = content.replace(regex, `${key}=${value}`);
-    } else {
-      content = `${content.trim()}\n${key}=${value}\n`.trimStart();
-    }
-    fs.writeFileSync(envPath, content, 'utf8');
-  } catch {
-    // Abaikan jika gagal menulis .env.local
+    return handleApiError(err, 'Gagal menjalankan aksi pengaturan.', 400);
   }
 }

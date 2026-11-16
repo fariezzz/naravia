@@ -1,412 +1,227 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { buildCharacterSystemPrompt } from '@/lib/character';
-import {
-  CharacterRow,
-  ChatRow,
-  getDb,
-  getDefaultPersona,
-  getPersonaById,
-  getSettingsMap,
-  MemoryRow,
-  MessageRow,
-  UserPersonaRow,
-} from '@/lib/db';
-import {
-  cleanCharacterOutput,
-  generateLLMResponse,
-  LLMMessage,
-  streamLLMResponse,
-} from '@/lib/llm';
-import { getRelevantLore } from '@/lib/lore';
+import { requireUser } from '@/lib/auth';
+import { buildTurnContext, maybeAutoTitle, runBackgroundMemoryTasks } from '@/lib/chatTurn';
+import { CharacterRow, ChatRow, execute, MessageRow, nowIso, query, queryOne } from '@/lib/db';
+import { formatMessageRow, parseJsonSafe } from '@/lib/format';
+import { handleApiError, jsonError, readJson, redactInternalDetails } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { cleanCharacterOutput, LLMMessage, streamLLMResponse } from '@/lib/llm';
+import { enforceLlmRateLimit } from '@/lib/rateLimit';
+import { assertTokenBudget, requireOwnedCharacter, requireOwnedChat, requireOwnedMessage } from '@/lib/store';
 
 // Wajib dinamis agar Next.js tidak men-cache atau mem-buffer respons streaming SSE ini
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-function formatMessageRow(m: MessageRow) {
-  let alternatives: string[] = [];
-  try {
-    alternatives = JSON.parse(m.alternatives || '[]');
-  } catch {
-    alternatives = [m.content];
-  }
-  if (alternatives.length === 0) alternatives = [m.content];
-  return {
-    ...m,
-    alternatives,
-    is_pinned_memory: Boolean(m.is_pinned_memory),
-  };
-}
+const MAX_MESSAGE_LENGTH = 20000;
 
-function resolveChatPersona(chat: ChatRow): UserPersonaRow | null {
-  if (chat.persona_id) {
-    return getPersonaById(chat.persona_id);
-  }
-  if (chat.use_latest_persona || !chat.persona_snapshot) {
-    return getDefaultPersona();
-  }
-  try {
-    return JSON.parse(chat.persona_snapshot) as UserPersonaRow;
-  } catch {
-    return getDefaultPersona();
-  }
-}
-
-/**
- * Menyusun system prompt + riwayat pesan LLM untuk sebuah giliran karakter,
- * dipakai bersama oleh alur kirim pesan baru dan alur regenerate/swipe.
- */
-function buildTurnContext(params: {
-  chat: ChatRow;
-  character: CharacterRow;
-  historyMessages: MessageRow[];
-  isAlternativeVariation?: boolean;
-}) {
-  const { chat, character, historyMessages, isAlternativeVariation } = params;
-  const db = getDb();
-  const settings = getSettingsMap();
-
-  const historyLimit = Math.max(4, parseInt(settings.history_limit || '20', 10) || 20);
-  const slicedHistory = historyMessages.slice(-historyLimit);
-
-  const recentText = slicedHistory.map((m) => m.content).join('\n');
-  const lore = getRelevantLore(character.world_id, recentText);
-  const persona = resolveChatPersona(chat);
-
-  const memories = (db
-    .prepare('SELECT * FROM memories WHERE character_id = ? OR character_id IS NULL ORDER BY created_at DESC LIMIT 25')
-    .all(character.id) as unknown) as MemoryRow[];
-
-  let systemPrompt = buildCharacterSystemPrompt({
-    character,
-    persona,
-    memories,
-    lore,
-    chatSummary: chat.summary,
-    replyStyle: (chat.reply_style as any) || 'sedang',
-  });
-
-  if (isAlternativeVariation) {
-    systemPrompt += `\n\nCATATAN VARIASI: Berikan sudut pandang respons, ekspresi, atau kelanjutan kalimat yang berbeda dari jawaban sebelumnya, namun tetap 100% konsisten dengan kepribadian ${character.name}.`;
-  }
-
-  const llmMessages: LLMMessage[] = [
-    { role: 'system', content: systemPrompt },
-    ...slicedHistory.map((m) => ({
-      role: (m.role === 'character' ? 'assistant' : 'user') as 'user' | 'assistant',
-      content: m.content,
-    })),
-  ];
-
-  const baseTemp =
-    chat.temperature ??
-    character.temperature_override ??
-    (parseFloat(settings.temperature || '0.9') || 0.9);
-
-  const effectiveTemp = isAlternativeVariation ? Math.min(1.15, baseTemp + 0.08) : baseTemp;
-  const maxTokens = chat.max_tokens ?? (parseInt(settings.max_tokens || '1024', 10) || 1024);
-
-  return { llmMessages, temperature: effectiveTemp, maxTokens };
+function sse(data: unknown): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 export async function POST(req: NextRequest) {
-  const db = getDb();
-  let userMessageRow: MessageRow | null = null;
   let charMessageId: string | null = null;
   let isRegenerate = false;
 
   try {
-    const body = await req.json();
+    const user = await requireUser(req);
+    enforceLlmRateLimit(user.id);
+    // Cek kuota sebelum menyimpan apa pun agar pengguna mendapat error HTTP yang jelas
+    await assertTokenBudget(user.id);
+
+    const body = await readJson(req);
     const action = String(body.action || 'send');
     isRegenerate = action === 'regenerate' || action === 'swipe_generate';
 
-    let chat: ChatRow | undefined;
-    let character: CharacterRow | undefined;
+    let chat: ChatRow;
+    let character: CharacterRow;
     let llmMessages: LLMMessage[];
-    let effectiveTemperature: number | undefined;
+    let temperature: number;
+    let maxTokens: number;
     let existingAlternatives: string[] = [];
+    let userMessageRow: MessageRow | null = null;
 
     if (isRegenerate) {
-      // Alur Regenerate / Buat Alternatif Swipe Baru (streaming)
-      const messageId = String(body.messageId || '');
-      const msg = (db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as unknown) as
-        | MessageRow
-        | undefined;
-      if (!msg || msg.role !== 'character') {
-        return NextResponse.json({ error: 'Pesan karakter tidak ditemukan.' }, { status: 404 });
-      }
+      // Alur regenerate / buat alternatif swipe baru
+      const msg = await requireOwnedMessage(user.id, String(body.messageId || ''));
+      if (msg.role !== 'character') return jsonError('Pesan karakter tidak ditemukan.', 404);
 
-      chat = (db.prepare('SELECT * FROM chats WHERE id = ?').get(msg.chat_id) as unknown) as
-        | ChatRow
-        | undefined;
-      if (!chat) {
-        return NextResponse.json({ error: 'Ruang chat tidak ditemukan.' }, { status: 404 });
-      }
+      chat = await requireOwnedChat(user.id, msg.chat_id);
+      character = await requireOwnedCharacter(user.id, chat.character_id);
 
-      character = (db.prepare('SELECT * FROM characters WHERE id = ?').get(chat.character_id) as unknown) as
-        | CharacterRow
-        | undefined;
-      if (!character) {
-        return NextResponse.json({ error: 'Karakter tidak ditemukan.' }, { status: 404 });
-      }
-
-      const allMsgs = (db
-        .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC')
-        .all(chat.id) as unknown) as MessageRow[];
-
-      const msgIdx = allMsgs.findIndex((m) => m.id === messageId);
+      const allMsgs = await query<MessageRow>('SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC', [chat.id]);
+      const msgIdx = allMsgs.findIndex((m) => m.id === msg.id);
       const historyBefore = msgIdx > 0 ? allMsgs.slice(0, msgIdx) : [];
 
-      try {
-        existingAlternatives = JSON.parse(msg.alternatives || '[]');
-      } catch {
-        existingAlternatives = [msg.content];
-      }
+      existingAlternatives = parseJsonSafe<string[]>(msg.alternatives, [msg.content]);
       if (existingAlternatives.length === 0) existingAlternatives = [msg.content];
 
-      const ctx = buildTurnContext({
+      const ctx = await buildTurnContext({
+        userId: user.id,
         chat,
         character,
         historyMessages: historyBefore,
         isAlternativeVariation: true,
       });
-      llmMessages = ctx.llmMessages;
-      effectiveTemperature = ctx.temperature;
-      charMessageId = messageId;
+      ({ llmMessages, temperature, maxTokens } = ctx);
+      charMessageId = msg.id;
     } else {
-      // Alur Kirim Pesan Baru / Lanjutkan Narasi
-      const chatId = String(body.chatId || '');
-      const userText = body.content !== undefined ? String(body.content) : '';
+      // Alur kirim pesan baru / lanjutkan narasi
+      const userText = String(body.content || '').trim();
+      if (userText.length > MAX_MESSAGE_LENGTH) return jsonError('Pesan terlalu panjang.', 400);
 
-      chat = (db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId) as unknown) as
-        | ChatRow
-        | undefined;
-      if (!chat) {
-        return NextResponse.json({ error: 'Percakapan tidak ditemukan.' }, { status: 404 });
+      chat = await requireOwnedChat(user.id, String(body.chatId || ''));
+      character = await requireOwnedCharacter(user.id, chat.character_id);
+
+      if (userText) {
+        userMessageRow = await queryOne<MessageRow>(
+          `INSERT INTO messages (id, chat_id, role, content, alternatives, active_alt_index, is_pinned_memory, created_at)
+           VALUES ($1, $2, 'user', $3, $4, 0, 0, $5) RETURNING *`,
+          [newId('msg'), chat.id, userText, JSON.stringify([userText]), nowIso()]
+        );
       }
 
-      character = (db.prepare('SELECT * FROM characters WHERE id = ?').get(chat.character_id) as unknown) as
-        | CharacterRow
-        | undefined;
-      if (!character) {
-        return NextResponse.json({ error: 'Karakter tidak ditemukan.' }, { status: 404 });
+      const pastMessages = await query<MessageRow>(
+        'SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC',
+        [chat.id]
+      );
+      if (pastMessages.length === 0) {
+        return jsonError('Belum ada riwayat percakapan. Tuliskan pesan awal untuk memulai percakapan.', 400);
       }
 
-      const trimmedInput = userText.trim();
-      if (action === 'send' && trimmedInput) {
-        const uId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-        const now = new Date().toISOString();
-        db.prepare(
-          `INSERT INTO messages (id, chat_id, role, content, is_pinned_memory, alternatives, created_at)
-           VALUES (?, ?, 'user', ?, 0, ?, ?)`
-        ).run(uId, chat.id, userText, JSON.stringify([userText]), now);
-        userMessageRow = (db.prepare('SELECT * FROM messages WHERE id = ?').get(uId) as unknown) as MessageRow;
-      }
+      const ctx = await buildTurnContext({
+        userId: user.id,
+        chat,
+        character,
+        historyMessages: pastMessages,
+        isContinuation: Boolean(body.isContinue || !userText),
+      });
+      ({ llmMessages, temperature, maxTokens } = ctx);
 
-      const pastMessages = (db
-        .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC')
-        .all(chat.id) as unknown) as MessageRow[];
-
-      const ctx = buildTurnContext({ chat, character, historyMessages: pastMessages });
-      llmMessages = ctx.llmMessages;
-      effectiveTemperature = ctx.temperature;
-
-      charMessageId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-      const nowTime = new Date().toISOString();
-      db.prepare(
-        `INSERT INTO messages (id, chat_id, role, content, is_pinned_memory, alternatives, created_at)
-         VALUES (?, ?, 'character', '', 0, '[]', ?)`
-      ).run(charMessageId, chat.id, nowTime);
+      charMessageId = newId('msg');
+      await execute(
+        `INSERT INTO messages (id, chat_id, role, content, alternatives, active_alt_index, is_pinned_memory, created_at)
+         VALUES ($1, $2, 'character', '', '[]', 0, 0, $3)`,
+        [charMessageId, chat.id, nowIso(5)]
+      );
     }
 
     const finalChat = chat;
     const finalCharacter = character;
     const finalCharMessageId = charMessageId as string;
+    const regenerating = isRegenerate;
 
-    // Buka ReadableStream SSE
-    const encoder = new TextEncoder();
+    // Simpan teks akhir: alternatif baru (regenerate) atau isi pesan baru
+    const persistContent = async (content: string) => {
+      if (regenerating) {
+        const updatedAlternatives = [...existingAlternatives, content];
+        await execute('UPDATE messages SET content = $1, alternatives = $2, active_alt_index = $3 WHERE id = $4', [
+          content,
+          JSON.stringify(updatedAlternatives),
+          updatedAlternatives.length - 1,
+          finalCharMessageId,
+        ]);
+      } else {
+        await execute('UPDATE messages SET content = $1, alternatives = $2 WHERE id = $3', [
+          content,
+          JSON.stringify([content]),
+          finalCharMessageId,
+        ]);
+      }
+      await execute('UPDATE chats SET updated_at = now() WHERE id = $1', [finalChat.id]);
+      return queryOne<MessageRow>('SELECT * FROM messages WHERE id = $1', [finalCharMessageId]);
+    };
+
+    const discardEmptyPlaceholder = async () => {
+      if (!regenerating) {
+        await execute("DELETE FROM messages WHERE id = $1 AND content = ''", [finalCharMessageId]).catch(() => undefined);
+      }
+    };
 
     const stream = new ReadableStream({
       async start(controller) {
         let rawAccumulated = '';
 
         try {
-          // Kirim ID pesan dan data pesan pengguna di awal
           controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                type: 'start',
-                characterMessageId: finalCharMessageId,
-                isRegenerate,
-                userMessage: userMessageRow ? formatMessageRow(userMessageRow) : null,
-              })}\n\n`
-            )
+            sse({
+              type: 'start',
+              characterMessageId: finalCharMessageId,
+              isRegenerate: regenerating,
+              userMessage: userMessageRow ? formatMessageRow(userMessageRow) : null,
+            })
           );
 
-          // Panggil streaming LLM
+          // Sinyal request diteruskan agar tombol Berhenti ikut membatalkan panggilan ke provider
           const gen = streamLLMResponse(llmMessages, {
+            userId: user.id,
             characterId: finalCharacter.id,
             chatId: finalChat.id,
             actionType: 'chat',
-            temperature: finalCharacter.temperature_override ?? effectiveTemperature,
+            temperature,
+            maxTokens,
+            signal: req.signal,
           });
 
           for await (const chunk of gen) {
             rawAccumulated += chunk;
+            controller.enqueue(sse({ type: 'chunk', text: chunk }));
+          }
+
+          // Pembersihan glitch/tag internal dijalankan pada teks utuh, bukan per-chunk
+          const finalContent = cleanCharacterOutput(rawAccumulated, finalCharacter.name) || rawAccumulated.trim();
+          if (!finalContent) {
+            await discardEmptyPlaceholder();
             controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  type: 'chunk',
-                  text: chunk,
-                })}\n\n`
-              )
+              sse({ type: 'error', error: 'Model menghasilkan respons kosong. Silakan coba kirim atau generate ulang.' })
             );
+            controller.close();
+            return;
           }
 
-          // Setelah stream selesai, bersihkan glitch / tag internal / perulangan karakter
-          const cleanedText = cleanCharacterOutput(rawAccumulated, finalCharacter.name);
-          const finalContent = cleanedText || rawAccumulated.trim() || '...';
+          const finalRow = await persistContent(finalContent);
 
-          const finishTime = new Date().toISOString();
-
-          if (isRegenerate) {
-            const updatedAlternatives = [...existingAlternatives, finalContent];
-            const newIndex = updatedAlternatives.length - 1;
-            db.prepare('UPDATE messages SET content = ?, alternatives = ?, active_alt_index = ? WHERE id = ?').run(
-              finalContent,
-              JSON.stringify(updatedAlternatives),
-              newIndex,
-              finalCharMessageId
-            );
-          } else {
-            db.prepare('UPDATE messages SET content = ?, alternatives = ? WHERE id = ?').run(
-              finalContent,
-              JSON.stringify([finalContent]),
-              finalCharMessageId
-            );
-          }
-          db.prepare('UPDATE chats SET updated_at = ? WHERE id = ?').run(finishTime, finalChat.id);
-
-          const finalRow = (db.prepare('SELECT * FROM messages WHERE id = ?').get(finalCharMessageId) as unknown) as MessageRow;
-
-          // Periksa apakah perlu auto-title (hanya pada alur kirim pesan baru, bukan regenerate)
           let newTitle: string | null = null;
-          if (!isRegenerate) {
-            const allMsgs = (db
-              .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC')
-              .all(finalChat.id) as unknown) as MessageRow[];
-
-            const isDefaultTitle =
-              !finalChat.title ||
-              finalChat.title.startsWith('Percakapan dengan ') ||
-              finalChat.title.startsWith('Chat dengan ') ||
-              finalChat.title === 'Percakapan Baru';
-
-            if (isDefaultTitle && allMsgs.length >= 2 && allMsgs.length <= 4) {
-              try {
-                const earlyTranscript = allMsgs
-                  .slice(0, 4)
-                  .map((m) => `${m.role === 'character' ? finalCharacter.name : 'Pengguna'}: ${m.content.slice(0, 160)}`)
-                  .join('\n');
-
-                const titleRes = await generateLLMResponse(
-                  [
-                    {
-                      role: 'system',
-                      content:
-                        'Buatlah satu judul topik percakapan yang padat, menarik, dan spesifik (maksimal 3-5 kata, Bahasa Indonesia, tanpa tanda kutip atau titik) berdasarkan awal dialog berikut:',
-                    },
-                    { role: 'user', content: earlyTranscript },
-                  ],
-                  {
-                    temperature: 0.3,
-                    maxTokens: 40,
-                    characterId: finalCharacter.id,
-                    chatId: finalChat.id,
-                    actionType: 'title',
-                  }
-                );
-
-                let cleanTitleCandidate = (titleRes.text || '')
-                  .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
-                  .replace(/^(Judul|Topic|Topik)\s*:\s*/i, '')
-                  .trim();
-
-                if (cleanTitleCandidate.length > 3 && cleanTitleCandidate.length <= 50) {
-                  db.prepare('UPDATE chats SET title = ? WHERE id = ?').run(cleanTitleCandidate, finalChat.id);
-                  newTitle = cleanTitleCandidate;
-                }
-              } catch {}
-            }
+          let allMsgs: MessageRow[] = [];
+          if (!regenerating) {
+            allMsgs = await query<MessageRow>('SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC', [
+              finalChat.id,
+            ]);
+            newTitle = await maybeAutoTitle(user.id, finalChat, finalCharacter, allMsgs);
           }
 
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                type: 'done',
-                message: formatMessageRow(finalRow),
-                title: newTitle,
-              })}\n\n`
-            )
-          );
+          controller.enqueue(sse({ type: 'done', message: formatMessageRow(finalRow!), title: newTitle }));
           controller.close();
+
+          // Ringkasan & ekstraksi memori berjalan setelah klien menerima balasan
+          if (!regenerating) {
+            runBackgroundMemoryTasks(user.id, finalChat, finalCharacter, allMsgs).catch(() => undefined);
+          }
         } catch (streamErr: any) {
-          const isAbort = streamErr.name === 'AbortError' || req.signal.aborted;
+          const isAbort = streamErr?.name === 'AbortError' || req.signal.aborted;
 
-          if (rawAccumulated.trim()) {
-            const cleaned = cleanCharacterOutput(rawAccumulated, finalCharacter.name) || rawAccumulated.trim();
-
-            if (isRegenerate) {
-              const updatedAlternatives = [...existingAlternatives, cleaned];
-              const newIndex = updatedAlternatives.length - 1;
-              db.prepare('UPDATE messages SET content = ?, alternatives = ?, active_alt_index = ? WHERE id = ?').run(
-                cleaned,
-                JSON.stringify(updatedAlternatives),
-                newIndex,
-                finalCharMessageId
-              );
+          try {
+            if (rawAccumulated.trim()) {
+              const cleaned = cleanCharacterOutput(rawAccumulated, finalCharacter.name) || rawAccumulated.trim();
+              const savedRow = await persistContent(cleaned);
+              controller.enqueue(sse({ type: 'stopped', message: formatMessageRow(savedRow!) }));
             } else {
-              db.prepare('UPDATE messages SET content = ?, alternatives = ? WHERE id = ?').run(
-                cleaned,
-                JSON.stringify([cleaned]),
-                finalCharMessageId
-              );
+              await discardEmptyPlaceholder();
+              const message = isAbort
+                ? 'Balasan dihentikan.'
+                : redactInternalDetails(streamErr?.message || 'Gagal streaming balasan.');
+              controller.enqueue(sse({ type: 'error', error: message }));
             }
-
-            const savedRow = (db.prepare('SELECT * FROM messages WHERE id = ?').get(finalCharMessageId) as unknown) as MessageRow;
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  type: 'stopped',
-                  message: formatMessageRow(savedRow),
-                })}\n\n`
-              )
-            );
-          } else {
-            if (!isRegenerate) {
-              db.prepare('DELETE FROM messages WHERE id = ?').run(finalCharMessageId);
-            }
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  type: 'error',
-                  error: isAbort ? 'Balasan dihentikan.' : streamErr.message || 'Gagal streaming balasan.',
-                })}\n\n`
-              )
-            );
+          } catch {
+            // Klien sudah memutus koneksi; tidak ada lagi yang perlu dikirim
           }
-          controller.close();
+          try {
+            controller.close();
+          } catch {}
         }
       },
-      cancel() {
-        if (charMessageId && !isRegenerate) {
-          const row = (db.prepare('SELECT * FROM messages WHERE id = ?').get(charMessageId) as unknown) as
-            | MessageRow
-            | undefined;
-          if (row && !row.content.trim()) {
-            db.prepare('DELETE FROM messages WHERE id = ?').run(charMessageId);
-          }
-        }
+      async cancel() {
+        await discardEmptyPlaceholder();
       },
     });
 
@@ -415,14 +230,14 @@ export async function POST(req: NextRequest) {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive',
-        // Mencegah proxy (nginx/Cloudflare) menahan/mem-buffer chunk sebelum dikirim ke klien
+        // Mencegah proxy (nginx/Cloudflare) menahan chunk sebelum dikirim ke klien
         'X-Accel-Buffering': 'no',
       },
     });
-  } catch (err: any) {
+  } catch (err) {
     if (charMessageId && !isRegenerate) {
-      db.prepare('DELETE FROM messages WHERE id = ?').run(charMessageId);
+      await execute("DELETE FROM messages WHERE id = $1 AND content = ''", [charMessageId]).catch(() => undefined);
     }
-    return NextResponse.json({ error: err.message || 'Gagal memproses permintaan chat.' }, { status: 500 });
+    return handleApiError(err, 'Gagal memproses permintaan chat.');
   }
 }

@@ -1,123 +1,76 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, LoreEntryRow } from '@/lib/db';
+import { requireUser } from '@/lib/auth';
+import { execute, LoreEntryRow, queryOne } from '@/lib/db';
+import { formatLoreRow } from '@/lib/format';
+import { handleApiError, jsonError, readJson } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { requireOwnedLore, requireOwnedWorld } from '@/lib/store';
 
-function formatLore(l: LoreEntryRow) {
-  let keywords: string[] = [];
-  try {
-    keywords = JSON.parse(l.keywords || '[]');
-  } catch {
-    keywords = [];
-  }
-  return {
-    id: l.id,
-    world_id: l.world_id,
-    title: l.title,
-    keywords,
-    content: l.content,
-    enabled: Boolean(l.enabled),
-    created_at: l.created_at,
-  };
+export const runtime = 'nodejs';
+
+function parseKeywords(raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw.map((k) => String(k || '')) : String(raw || '').split(',');
+  return list.map((k) => k.trim()).filter(Boolean).slice(0, 30);
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const user = await requireUser(req);
+    const body = await readJson(req);
     const worldId = String(body.world_id || '').trim();
     const title = String(body.title || '').trim();
     const content = String(body.content || '').trim();
-    const keywords = Array.isArray(body.keywords)
-      ? body.keywords.map((k: unknown) => String(k || '').trim()).filter(Boolean)
-      : String(body.keywords || '')
-          .split(',')
-          .map((k) => k.trim())
-          .filter(Boolean);
+    const keywords = parseKeywords(body.keywords);
 
     if (!worldId || !content || keywords.length === 0) {
-      return NextResponse.json(
-        { error: 'Dunia, kata kunci pemicu, dan isi penjelasan lore wajib diisi.' },
-        { status: 400 }
-      );
+      return jsonError('Dunia, kata kunci pemicu, dan isi penjelasan lore wajib diisi.', 400);
     }
+    await requireOwnedWorld(user.id, worldId);
 
-    const db = getDb();
-    const id = `lore-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const now = new Date().toISOString();
-
-    db.prepare(`
-      INSERT INTO lore_entries (id, world_id, title, keywords, content, enabled, created_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?)
-    `).run(id, worldId, title || keywords[0], JSON.stringify(keywords), content, now);
-
-    const created = (db.prepare('SELECT * FROM lore_entries WHERE id = ?').get(id) as unknown) as LoreEntryRow;
-    return NextResponse.json({ entry: formatLore(created) }, { status: 201 });
+    const created = await queryOne<LoreEntryRow>(
+      `INSERT INTO lore_entries (id, world_id, title, keywords, content, enabled)
+       VALUES ($1, $2, $3, $4, $5, 1) RETURNING *`,
+      [newId('lore'), worldId, (title || keywords[0]).slice(0, 200), JSON.stringify(keywords), content]
+    );
+    return NextResponse.json({ entry: formatLoreRow(created!) }, { status: 201 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal menambah entri lorebook.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal menambah entri lorebook.');
   }
 }
 
 export async function PUT(req: NextRequest) {
   try {
-    const body = await req.json();
+    const user = await requireUser(req);
+    const body = await readJson(req);
     const id = String(body.id || '').trim();
-    if (!id) {
-      return NextResponse.json({ error: 'ID entri lore wajib diisi.' }, { status: 400 });
-    }
+    if (!id) return jsonError('ID entri lore wajib diisi.', 400);
 
-    const db = getDb();
-    const existing = (db.prepare('SELECT * FROM lore_entries WHERE id = ?').get(id) as unknown) as LoreEntryRow | undefined;
-    if (!existing) {
-      return NextResponse.json({ error: 'Entri lore tidak ditemukan.' }, { status: 404 });
-    }
-
-    const keywords =
-      body.keywords !== undefined
-        ? JSON.stringify(
-            Array.isArray(body.keywords)
-              ? body.keywords.map((k: unknown) => String(k || '').trim()).filter(Boolean)
-              : String(body.keywords || '')
-                  .split(',')
-                  .map((k) => k.trim())
-                  .filter(Boolean)
-          )
-        : existing.keywords;
-
-    db.prepare(`
-      UPDATE lore_entries SET
-        title = ?,
-        keywords = ?,
-        content = ?,
-        enabled = ?
-      WHERE id = ?
-    `).run(
-      body.title !== undefined ? String(body.title).trim() : existing.title,
-      keywords,
-      body.content !== undefined ? String(body.content).trim() : existing.content,
-      body.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled,
-      id
+    const existing = await requireOwnedLore(user.id, id);
+    const updated = await queryOne<LoreEntryRow>(
+      `UPDATE lore_entries SET title = $1, keywords = $2, content = $3, enabled = $4 WHERE id = $5 RETURNING *`,
+      [
+        body.title !== undefined ? String(body.title).trim().slice(0, 200) : existing.title,
+        body.keywords !== undefined ? JSON.stringify(parseKeywords(body.keywords)) : existing.keywords,
+        body.content !== undefined ? String(body.content).trim() : existing.content,
+        body.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled,
+        id,
+      ]
     );
-
-    const updated = (db.prepare('SELECT * FROM lore_entries WHERE id = ?').get(id) as unknown) as LoreEntryRow;
-    return NextResponse.json({ entry: formatLore(updated) });
+    return NextResponse.json({ entry: formatLoreRow(updated!) });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memperbarui entri lorebook.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memperbarui entri lorebook.');
   }
 }
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-    if (!id) {
-      return NextResponse.json({ error: 'ID entri lore wajib disertakan.' }, { status: 400 });
-    }
-
-    const db = getDb();
-    db.prepare('DELETE FROM lore_entries WHERE id = ?').run(id);
+    const user = await requireUser(req);
+    const id = new URL(req.url).searchParams.get('id');
+    if (!id) return jsonError('ID entri lore wajib disertakan.', 400);
+    await requireOwnedLore(user.id, id);
+    await execute('DELETE FROM lore_entries WHERE id = $1', [id]);
     return NextResponse.json({ success: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal menghapus entri lorebook.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal menghapus entri lorebook.');
   }
 }

@@ -1,70 +1,74 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CharacterRow, getDb, getDefaultPersona, getSettingsMap, GroupChatRow } from '@/lib/db';
+import { requireUser } from '@/lib/auth';
+import { CharacterRow, GroupChatRow, query, queryOne, withTransaction } from '@/lib/db';
+import { stripOwner } from '@/lib/format';
+import { handleApiError, jsonError, readJson } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { getDefaultPersona, getPersonaById, getUserSettings } from '@/lib/store';
 
-export async function GET() {
+export const runtime = 'nodejs';
+
+const MAX_GROUP_MEMBERS = 8;
+
+export async function GET(req: NextRequest) {
   try {
-    const db = getDb();
-    const groups = (db
-      .prepare('SELECT * FROM group_chats ORDER BY updated_at DESC')
-      .all() as unknown) as GroupChatRow[];
+    const user = await requireUser(req);
+    const groups = await query<GroupChatRow & { message_count: number }>(
+      `SELECT g.*, (SELECT COUNT(*) FROM group_messages gm WHERE gm.group_chat_id = g.id) AS message_count
+       FROM group_chats g WHERE g.user_id = $1 ORDER BY g.updated_at DESC`,
+      [user.id]
+    );
+    if (groups.length === 0) return NextResponse.json({ groupChats: [] });
 
-    const enriched = groups.map((g) => {
-      const members = db
-        .prepare(`
-          SELECT c.id, c.name, c.tagline, c.avatar, gm.join_order
-          FROM group_chat_members gm
-          JOIN characters c ON gm.character_id = c.id
-          WHERE gm.group_chat_id = ?
-          ORDER BY gm.join_order ASC
-        `)
-        .all(g.id);
+    const members = await query<{ group_chat_id: string; id: string; name: string; tagline: string; avatar: string; join_order: number }>(
+      `SELECT gm.group_chat_id, c.id, c.name, c.tagline, c.avatar, gm.join_order
+       FROM group_chat_members gm
+       JOIN characters c ON gm.character_id = c.id
+       WHERE gm.group_chat_id = ANY($1) AND c.user_id = $2
+       ORDER BY gm.join_order ASC`,
+      [groups.map((g) => g.id), user.id]
+    );
 
-      const msgCount = db
-        .prepare('SELECT COUNT(*) as cnt FROM group_messages WHERE group_chat_id = ?')
-        .get(g.id) as { cnt: number };
-
-      return {
-        ...g,
-        members,
-        message_count: Number(msgCount?.cnt || 0),
-      };
-    });
-
+    const enriched = groups.map((g) => ({
+      ...stripOwner(g),
+      members: members.filter((m) => m.group_chat_id === g.id).map(({ group_chat_id: _g, ...m }) => m),
+      message_count: Number(g.message_count || 0),
+    }));
     return NextResponse.json({ groupChats: enriched });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memuat daftar grup chat.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memuat daftar grup chat.');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const title = String(body.title || '').trim();
+    const user = await requireUser(req);
+    const body = await readJson(req);
+    const title = String(body.title || '').trim().slice(0, 120);
     const scenario = String(body.scenario || '').trim();
     const characterIds: string[] = Array.isArray(body.characterIds)
-      ? body.characterIds.map(String).filter(Boolean)
+      ? Array.from(new Set<string>(body.characterIds.map(String).filter(Boolean)))
       : [];
 
-    if (characterIds.length < 2) {
-      return NextResponse.json(
-        { error: 'Pilih minimal 2 karakter untuk membuat Grup Chat.' },
-        { status: 400 }
-      );
+    if (characterIds.length < 2) return jsonError('Pilih minimal 2 karakter untuk membuat Grup Chat.', 400);
+    if (characterIds.length > MAX_GROUP_MEMBERS) {
+      return jsonError(`Maksimal ${MAX_GROUP_MEMBERS} karakter dalam satu grup.`, 400);
     }
 
-    const db = getDb();
-    const id = `gchat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const now = new Date().toISOString();
-
+    // Hanya karakter milik pengguna sendiri yang boleh dimasukkan
+    const owned = await query<CharacterRow>(
+      'SELECT * FROM characters WHERE id = ANY($1) AND user_id = $2',
+      [characterIds, user.id]
+    );
     const chars = characterIds
-      .map((cid) => (db.prepare('SELECT * FROM characters WHERE id = ?').get(cid) as unknown) as CharacterRow | undefined)
+      .map((cid) => owned.find((c) => c.id === cid))
       .filter((c): c is CharacterRow => Boolean(c));
+    if (chars.length < 2) return jsonError('Karakter yang dipilih tidak ditemukan.', 400);
 
-    const resolvedTitle = title || `Grup: ${chars.map((c) => c.name).join(', ')}`;
-
-    const settings = getSettingsMap();
-    const defaultPersona = getDefaultPersona();
+    const settings = await getUserSettings(user.id);
+    const persona = body.personaId
+      ? await getPersonaById(user.id, String(body.personaId))
+      : await getDefaultPersona(user.id);
     const temp =
       body.temperature !== undefined && body.temperature !== null && body.temperature !== ''
         ? Number(body.temperature)
@@ -73,26 +77,27 @@ export async function POST(req: NextRequest) {
       body.maxTokens !== undefined && body.maxTokens !== null && body.maxTokens !== ''
         ? Number(body.maxTokens)
         : parseInt(settings.max_tokens || '1024', 10) || 1024;
-    const personaId = body.personaId ? String(body.personaId) : defaultPersona?.id || null;
+    const turnMode = ['auto', 'mentioned', 'round_robin'].includes(body.turn_mode) ? body.turn_mode : 'auto';
 
-    db.prepare(`
-      INSERT INTO group_chats (id, title, scenario, turn_mode, last_speaker_id, temperature, max_tokens, persona_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
-    `).run(id, resolvedTitle, scenario, body.turn_mode || 'auto', temp, maxTokens, personaId, now, now);
-
-    const insertMember = db.prepare(`
-      INSERT INTO group_chat_members (group_chat_id, character_id, join_order)
-      VALUES (?, ?, ?)
-    `);
-
-    chars.forEach((c, idx) => {
-      insertMember.run(id, c.id, idx);
+    const id = newId('gchat');
+    const created = await withTransaction(async (client) => {
+      const row = await queryOne<GroupChatRow>(
+        `INSERT INTO group_chats (id, user_id, title, scenario, turn_mode, last_speaker_id, temperature, max_tokens, persona_id)
+         VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8) RETURNING *`,
+        [id, user.id, title || `Grup: ${chars.map((c) => c.name).join(', ')}`.slice(0, 120), scenario, turnMode, temp, maxTokens, persona?.id || null],
+        client
+      );
+      for (const [idx, c] of chars.entries()) {
+        await client.query(
+          'INSERT INTO group_chat_members (group_chat_id, character_id, join_order) VALUES ($1, $2, $3)',
+          [id, c.id, idx]
+        );
+      }
+      return row;
     });
 
-    const created = db.prepare('SELECT * FROM group_chats WHERE id = ?').get(id);
-    return NextResponse.json({ groupChat: created }, { status: 201 });
+    return NextResponse.json({ groupChat: stripOwner(created!) }, { status: 201 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal membuat grup chat.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal membuat grup chat.');
   }
 }

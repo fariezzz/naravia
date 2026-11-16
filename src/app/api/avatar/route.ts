@@ -1,52 +1,66 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteUploadAsset } from '@/lib/assets';
+import { deleteUploadAsset, ensureUploadsDir, MAX_UPLOAD_BYTES } from '@/lib/assets';
+import { requireUser } from '@/lib/auth';
+import { handleApiError, jsonError, readJson } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { enforceRateLimit } from '@/lib/rateLimit';
+import { registerUpload } from '@/lib/store';
+
+export const runtime = 'nodejs';
+
+// Validasi tipe gambar dari isi file (magic bytes), bukan dari nama file kiriman klien
+function detectImageExt(buf: Buffer): string | null {
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return '.png';
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return '.jpg';
+  if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    return '.webp';
+  }
+  return null;
+}
+
+function escapeXml(text: string): string {
+  return text.replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c]!);
+}
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await requireUser(req);
+    enforceRateLimit(`avatar:${user.id}`, 60, 60 * 60_000);
     const contentType = req.headers.get('content-type') || '';
 
-    // 1. Jika unggah file gambar dari perangkat
+    // 1. Unggah gambar dari perangkat (WEBP/PNG/JPG; SVG unggahan ditolak karena bisa memuat skrip)
     if (contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
-      const file = formData.get('file') as File | null;
-      if (!file) {
-        return NextResponse.json({ error: 'Pilih file gambar terlebih dahulu.' }, { status: 400 });
-      }
+      const file = formData.get('file');
+      if (!(file instanceof File)) return jsonError('Pilih file gambar terlebih dahulu.', 400);
+      if (file.size > MAX_UPLOAD_BYTES) return jsonError('Ukuran gambar maksimal 5 MB.', 400);
 
-      const ext = path.extname(file.name).toLowerCase() || '.webp';
-      const allowed = ['.png', '.jpg', '.jpeg', '.webp', '.svg'];
-      if (!allowed.includes(ext)) {
-        return NextResponse.json(
-          { error: 'Format gambar harus WEBP, PNG, JPG, JPEG, atau SVG.' },
-          { status: 400 }
-        );
-      }
-
-      const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const ext = detectImageExt(buffer);
+      if (!ext) return jsonError('Format gambar harus WEBP, PNG, atau JPG.', 400);
 
       const prefix = file.name.toLowerCase().startsWith('persona-') ? 'persona' : 'avatar';
-      const filename = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}${ext}`;
-      const buffer = Buffer.from(await file.arrayBuffer());
-      fs.writeFileSync(path.join(uploadsDir, filename), buffer);
+      const filename = `${newId(prefix)}${ext}`;
+      fs.writeFileSync(path.join(ensureUploadsDir(), filename), buffer);
+      await registerUpload(filename, user.id, buffer.length);
 
-      // Jika ada referensi avatar sebelumnya yang digantikan dan belum tersimpan di database, bersihkan segera
+      // Avatar sementara yang tergantikan sebelum disimpan dibersihkan (hanya milik pengguna sendiri)
       const previousAvatarUrl = formData.get('previousAvatarUrl');
-      if (previousAvatarUrl && typeof previousAvatarUrl === 'string') {
-        deleteUploadAsset(previousAvatarUrl);
+      if (typeof previousAvatarUrl === 'string' && previousAvatarUrl) {
+        await deleteUploadAsset(previousAvatarUrl, user.id);
       }
 
       return NextResponse.json({ avatarUrl: `/uploads/${filename}` });
     }
 
-    // 2. Generator Avatar Ilustrasi SVG (Fase 3)
-    const body = await req.json();
-    const name = String(body.name || 'Karakter').trim();
-    const paletteIndex = Number(body.paletteIndex ?? Math.floor(Math.random() * 6));
+    // 2. Generator avatar ilustrasi SVG dari inisial nama (dibuat server, isi aman)
+    const body = await readJson(req);
+    const name = String(body.name || 'Karakter').trim().slice(0, 120);
+    const paletteIndex = Math.abs(Math.floor(Number(body.paletteIndex ?? Math.random() * 6))) || 0;
 
     const palettes = [
       { bg1: '#EEF2FF', bg2: '#E0E7FF', accent: '#4F46E5', text: '#312E81' },
@@ -57,12 +71,13 @@ export async function POST(req: NextRequest) {
       { bg1: '#F1F5F9', bg2: '#E2E8F0', accent: '#334155', text: '#0F172A' },
     ];
     const pal = palettes[paletteIndex % palettes.length];
-    const initials = name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase() || '')
-      .join('') || 'N';
+    const initials =
+      name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((w) => w[0]?.toUpperCase() || '')
+        .join('') || 'N';
 
     const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
   <defs>
@@ -74,19 +89,15 @@ export async function POST(req: NextRequest) {
   <rect width="240" height="240" rx="48" fill="url(#g)" />
   <circle cx="190" cy="50" r="64" fill="${pal.accent}" opacity="0.08" />
   <circle cx="45" cy="195" r="72" fill="${pal.accent}" opacity="0.12" />
-  <text x="120" y="138" font-family="system-ui, -apple-system, sans-serif" font-size="76" font-weight="700" fill="${pal.text}" text-anchor="middle">${initials}</text>
+  <text x="120" y="138" font-family="system-ui, -apple-system, sans-serif" font-size="76" font-weight="700" fill="${pal.text}" text-anchor="middle">${escapeXml(initials)}</text>
 </svg>`;
 
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-    const filename = `avatar-gen-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.svg`;
-    fs.writeFileSync(path.join(uploadsDir, filename), svgContent, 'utf8');
+    const filename = `${newId('avatar-gen')}.svg`;
+    fs.writeFileSync(path.join(ensureUploadsDir(), filename), svgContent, 'utf8');
+    await registerUpload(filename, user.id, Buffer.byteLength(svgContent));
 
     return NextResponse.json({ avatarUrl: `/uploads/${filename}` });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal memproses avatar.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(err, 'Gagal memproses avatar.');
   }
 }

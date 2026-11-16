@@ -1,4 +1,4 @@
-import { getSettingsMap } from './db';
+import { getSystemSettings } from './store';
 import { generateLLMResponse } from './llm';
 import { sanitizeCharacterDraftFields } from './metaFilter';
 
@@ -49,8 +49,9 @@ export interface GeneratedCharacterDraft {
 /**
  * Mencari referensi di web jika kunci API pencarian gratis (Tavily / Brave) tersedia.
  */
+// Penyedia pencarian adalah setelan global yang dikelola admin
 export async function performOptionalWebSearch(query: string): Promise<{ snippets: string; sources: string[] }> {
-  const settings = getSettingsMap();
+  const settings = await getSystemSettings();
   const provider = (settings.search_provider || 'model').toLowerCase();
   const apiKey = (
     settings.search_api_key ||
@@ -118,6 +119,7 @@ export async function performOptionalWebSearch(query: string): Promise<{ snippet
  * 3. Melakukan riset (pengetahuan model / web search / teks tempel) dan menyusun seluruh kartu karakter.
  */
 export async function generateCharacterFromIdea(params: {
+  userId: string;
   idea: string;
   manualResearchText?: string;
   characterTypeHint?: 'auto' | 'existing' | 'original';
@@ -200,6 +202,7 @@ Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika m
       temperature: 0.75,
       maxTokens: 4096,
       actionType: 'research',
+      userId: params.userId,
       jsonMode: true,
     }
   );
@@ -274,6 +277,7 @@ Kembalikan HANYA objek JSON valid (tanpa markdown code block di luar JSON jika m
  * atau konsisten dan masuk akal secara lore (jika karakter orisinal).
  */
 export async function verifyResearchRevision(params: {
+  userId: string;
   characterName: string;
   currentDraft: Partial<GeneratedCharacterDraft>;
   revisionRequest: string;
@@ -327,6 +331,7 @@ ${webContext ? `REFERENSI DARI WEB:\n${webContext.slice(0, 4000)}` : ''}`;
       temperature: 0.2,
       maxTokens: 800,
       actionType: 'research',
+      userId: params.userId,
       jsonMode: true,
     }
   );
@@ -349,6 +354,7 @@ ${webContext ? `REFERENSI DARI WEB:\n${webContext.slice(0, 4000)}` : ''}`;
  * Melakukan riset ulang dan merevisi draf karakter berdasarkan revisi yang terverifikasi.
  */
 export async function reviseCharacterDraft(params: {
+  userId: string;
   currentDraft: GeneratedCharacterDraft;
   revisionRequest: string;
   verification: RevisionVerificationResult;
@@ -414,6 +420,7 @@ ${webSearchContext ? `REFERENSI TAMBAHAN DARI WEB:\n${webSearchContext.slice(0, 
       temperature: 0.7,
       maxTokens: 4096,
       actionType: 'research',
+      userId: params.userId,
       jsonMode: true,
     }
   );
