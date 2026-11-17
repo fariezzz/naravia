@@ -77,7 +77,7 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
-Buka `http://localhost:3000`. Tabel database dibuat otomatis saat koneksi pertama. **Akun pertama yang mendaftar otomatis menjadi admin.** Admin juga bisa dibuat lewat `ADMIN_EMAIL` dan `ADMIN_PASSWORD` di `.env.local`, atau lewat CLI:
+Buka `http://localhost:3002`. Tabel database dibuat otomatis saat koneksi pertama. **Akun pertama yang mendaftar otomatis menjadi admin.** Admin juga bisa dibuat lewat `ADMIN_EMAIL` dan `ADMIN_PASSWORD` di `.env.local`, atau lewat CLI:
 
 ```bash
 node --env-file=.env.local scripts/create-admin.mjs --email admin@contoh.com --name "Admin"
@@ -119,7 +119,7 @@ cp .env.local.example .env
 docker compose up -d --build
 ```
 
-Compose menjalankan dua service: `db` (PostgreSQL 16, volume `naravia-pgdata`, port tidak dibuka ke luar) dan `naravia` (aplikasi di port 3000). Unggahan avatar disimpan di `./public/uploads`. Healthcheck container memakai endpoint `/api/health`, yang hanya memeriksa koneksi database dan tidak mengembalikan data apa pun.
+Compose menjalankan dua service: `db` (PostgreSQL 16, volume `naravia-pgdata`, port tidak dibuka ke luar) dan `naravia` (aplikasi di port 3002). Unggahan avatar disimpan di `./public/uploads`. Healthcheck container memakai endpoint `/api/health`, yang hanya memeriksa koneksi database dan tidak mengembalikan data apa pun.
 
 Migrasi data SQLite lama di dalam container:
 

@@ -24,7 +24,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
+ENV PORT=3002
 ENV HOSTNAME="0.0.0.0"
 
 # Buat grup dan user non-root
@@ -48,7 +48,7 @@ RUN chown -R nextjs:nodejs /app/public
 
 USER nextjs
 
-EXPOSE 3000
+EXPOSE 3002
 
 VOLUME ["/app/public/uploads"]
 
