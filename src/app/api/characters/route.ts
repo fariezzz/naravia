@@ -70,8 +70,8 @@ export async function POST(req: NextRequest) {
       `INSERT INTO characters (
          id, user_id, name, tagline, avatar, description, personality, speaking_style,
          scenario, greeting, example_dialogues, tags, research_notes, world_id,
-         is_pinned, is_favorite, temperature_override, visibility, published_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+         is_pinned, is_favorite, temperature_override, visibility, allow_remix, published_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
          CASE WHEN $18 = 'public' THEN now() ELSE NULL END)
        RETURNING *`,
       [
@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
         body.is_favorite ? 1 : 0,
         normalizeTemperature(body.temperature_override),
         visibility,
+        body.allow_remix ? 1 : 0,
       ]
     );
 

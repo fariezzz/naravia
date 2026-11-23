@@ -9,12 +9,12 @@ interface CharacterAvatarProps {
 }
 
 const PALETTES = [
-  'bg-indigo-100 text-indigo-800 border-indigo-200',
-  'bg-teal-100 text-teal-800 border-teal-200',
-  'bg-rose-100 text-rose-800 border-rose-200',
-  'bg-amber-100 text-amber-800 border-amber-200',
-  'bg-violet-100 text-violet-800 border-violet-200',
-  'bg-slate-200 text-slate-800 border-slate-300',
+  'bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-950/80 dark:text-indigo-200 dark:border-indigo-800/80',
+  'bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950/80 dark:text-teal-200 dark:border-teal-800/80',
+  'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/80 dark:text-rose-200 dark:border-rose-800/80',
+  'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/80 dark:text-amber-200 dark:border-amber-800/80',
+  'bg-violet-100 text-violet-800 border-violet-200 dark:bg-violet-950/80 dark:text-violet-200 dark:border-violet-800/80',
+  'bg-slate-200 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700',
 ];
 
 export default function CharacterAvatar({ name, avatar, size = 'md' }: CharacterAvatarProps) {
@@ -40,7 +40,7 @@ export default function CharacterAvatar({ name, avatar, size = 'md' }: Character
         loading="lazy"
         decoding="async"
         onError={() => setLoadError(true)}
-        className={`${sizeClasses} object-cover shrink-0 border border-slate-200 bg-slate-100 block`}
+        className={`${sizeClasses} object-cover shrink-0 border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 block`}
       />
     );
   }

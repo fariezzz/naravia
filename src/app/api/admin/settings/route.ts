@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cleanupOrphanedUploads } from '@/lib/assets';
 import { requireAdmin } from '@/lib/auth';
+import { isSettingsEncryptionEnabled } from '@/lib/crypto';
 import { getClientIp, handleApiError, jsonError, readJson } from '@/lib/http';
 import { generateLLMResponse } from '@/lib/llm';
 import { performOptionalWebSearch } from '@/lib/research';
@@ -23,7 +24,7 @@ async function buildResponse() {
       out[key] = value;
     }
   }
-  return NextResponse.json({ settings: out });
+  return NextResponse.json({ settings: out, encryptionEnabled: isSettingsEncryptionEnabled() });
 }
 
 export async function GET(req: NextRequest) {

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
+import { isSafeUploadFilename, resolveUploadFilePath } from '@/lib/assets';
 import { getSessionUser } from '@/lib/auth';
 import { queryOne } from '@/lib/db';
 
@@ -32,14 +33,17 @@ async function resolveAccess(filename: string, userId: string | null): Promise<'
 
   if (!userId) return null;
 
-  // Selain itu, hanya pemilik file atau pemilik entitas yang memakainya
+  // Selain itu, hanya pemilik file, pemilik entitas yang memakainya,
+  // atau pemilik percakapan yang menyimpan snapshot karakter dengan avatar tersebut
+  const quotedUrl = JSON.stringify(url);
   const milik = await queryOne<{ cnt: number }>(
     `SELECT (
        (SELECT COUNT(*) FROM uploads WHERE filename = $1 AND user_id = $2) +
        (SELECT COUNT(*) FROM characters WHERE avatar = $3 AND user_id = $2) +
-       (SELECT COUNT(*) FROM user_personas WHERE avatar = $3 AND user_id = $2)
+       (SELECT COUNT(*) FROM user_personas WHERE avatar = $3 AND user_id = $2) +
+       (SELECT COUNT(*) FROM chats WHERE user_id = $2 AND character_snapshot IS NOT NULL AND POSITION($4 IN character_snapshot) > 0)
      ) AS cnt`,
-    [filename, userId, url]
+    [filename, userId, url, quotedUrl]
   );
   return Number(milik?.cnt || 0) > 0 ? 'pribadi' : null;
 }
@@ -52,20 +56,14 @@ export async function GET(req: NextRequest, context: { params: Promise<{ path?: 
       return NextResponse.json({ error: 'File tidak ditemukan.' }, { status: 404 });
     }
 
-    const filename = path.basename(subPaths[0]);
-    if (!filename || filename.startsWith('.') || filename !== subPaths[0]) {
+    const filename = subPaths[0];
+    if (!isSafeUploadFilename(filename)) {
       return NextResponse.json({ error: 'File tidak ditemukan.' }, { status: 404 });
     }
 
-    const uploadsDir = path.resolve(process.cwd(), 'public', 'uploads');
-    const fullPath = path.resolve(uploadsDir, filename);
-    // Mencegah directory traversal
-    if (!fullPath.startsWith(uploadsDir + path.sep)) {
-      return NextResponse.json({ error: 'Akses ditolak.' }, { status: 403 });
-    }
-
-    const contentType = MIME_MAP[path.extname(fullPath).toLowerCase()];
-    if (!contentType || !fs.existsSync(fullPath)) {
+    const fullPath = resolveUploadFilePath(filename);
+    const contentType = fullPath ? MIME_MAP[path.extname(fullPath).toLowerCase()] : undefined;
+    if (!fullPath || !contentType) {
       return NextResponse.json({ error: 'File tidak ditemukan.' }, { status: 404 });
     }
 

@@ -126,6 +126,10 @@ html.dark {
   color-scheme: dark;
 }
 
+select {
+  line-height: 1.25;
+}
+
 html.dark select,
 html.dark input,
 html.dark textarea,

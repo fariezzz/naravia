@@ -18,15 +18,15 @@ export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('overview');
 
   return (
-    <div className="max-w-6xl w-full mx-auto px-4 py-6 space-y-6">
-      <div>
-        <h1 className="text-lg font-bold text-slate-900 dark:text-white">Panel Admin</h1>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
+    <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 py-8 space-y-6">
+      <header className="space-y-2">
+        <h1 className="font-display text-3xl sm:text-4xl text-slate-900 dark:text-white">Panel Admin</h1>
+        <p className="text-sm text-slate-600 dark:text-slate-400">
           Kelola pengguna, kuota token, provider AI, dan pantau aktivitas sistem.
         </p>
-      </div>
+      </header>
 
-      <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-1.5 flex overflow-x-auto items-center gap-1 max-w-full">
+      <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-1.5 inline-flex overflow-x-auto items-center gap-1 max-w-full">
         {TABS.map((t) => {
           const Icon = t.icon;
           const active = tab === t.id;

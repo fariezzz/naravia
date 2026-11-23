@@ -15,10 +15,17 @@ import {
 
 type Settings = Record<string, string>;
 
-const SECRET_KEYS = ['llm_api_key', 'research_llm_api_key', 'search_api_key'];
+const SECRET_KEYS = [
+  'llm_api_key',
+  'fallback_llm_api_key',
+  'research_llm_api_key',
+  'embedding_api_key',
+  'search_api_key',
+];
 
 export default function AdminSystemSettings() {
   const [settings, setSettings] = useState<Settings>({});
+  const [encryptionEnabled, setEncryptionEnabled] = useState(false);
   // Kunci API hanya dikirim jika admin mengetik nilai baru
   const [secrets, setSecrets] = useState<Settings>({});
   const [models, setModels] = useState<string[]>([]);
@@ -27,8 +34,9 @@ export default function AdminSystemSettings() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const applyResponse = (data: { settings: Settings }) => {
+  const applyResponse = (data: { settings: Settings; encryptionEnabled?: boolean }) => {
     setSettings(data.settings);
+    if (typeof data.encryptionEnabled === 'boolean') setEncryptionEnabled(data.encryptionEnabled);
     setSecrets({});
   };
 
@@ -167,7 +175,23 @@ export default function AdminSystemSettings() {
       <section className={`${cardClass} p-5 space-y-4`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Provider Model Chat</h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Provider Model Chat</h2>
+              <span
+                className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                  encryptionEnabled
+                    ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300'
+                }`}
+                title={
+                  encryptionEnabled
+                    ? 'API key di database terenkripsi AES-256-GCM.'
+                    : 'Atur SETTINGS_ENCRYPTION_KEY di environment untuk mengenkripsi API key di database.'
+                }
+              >
+                {encryptionEnabled ? 'Kunci Terenkripsi AES-256' : 'Enkripsi DB Nonaktif'}
+              </span>
+            </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               Dipakai oleh seluruh pengguna. Kunci API tidak pernah ditampilkan utuh di browser.
             </p>
@@ -228,6 +252,37 @@ export default function AdminSystemSettings() {
 
       <section className={`${cardClass} p-5 space-y-4`}>
         <div>
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Provider Cadangan (Auto-Fallback)</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Opsional. Dipakai otomatis bila provider utama mengalami rate-limit (429), timeout, atau error jaringan.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className={labelClass}>Model Cadangan</label>
+            <input
+              list="admin-models"
+              value={settings.fallback_model || ''}
+              onChange={(e) => set('fallback_model', e.target.value)}
+              placeholder="Contoh: gemini-2.5-flash"
+              className={`${inputClass} font-mono`}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Base URL Cadangan</label>
+            <input
+              value={settings.fallback_llm_base_url || ''}
+              onChange={(e) => set('fallback_llm_base_url', e.target.value)}
+              placeholder="Kosong = sama dengan URL utama"
+              className={`${inputClass} font-mono`}
+            />
+          </div>
+          {secretInput('fallback_llm_api_key', 'API Key Cadangan', 'Kosong = pakai API Key utama (jika URL sama)')}
+        </div>
+      </section>
+
+      <section className={`${cardClass} p-5 space-y-4`}>
+        <div>
           <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Model Khusus Riset & Verifikasi Fakta</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Opsional. Kolom kosong memakai provider chat di atas.</p>
         </div>
@@ -241,6 +296,36 @@ export default function AdminSystemSettings() {
             <input value={settings.research_llm_base_url || ''} onChange={(e) => set('research_llm_base_url', e.target.value)} placeholder={settings.llm_base_url} className={`${inputClass} font-mono`} />
           </div>
           {secretInput('research_llm_api_key', 'API Key Riset', 'Sama dengan API Key chat')}
+        </div>
+      </section>
+
+      <section className={`${cardClass} p-5 space-y-4`}>
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Embedding Memori Semantik</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Opsional. Mengaktifkan pencarian memori berbasis kemiripan makna (cosine similarity / pgvector). Tanpa ini, Naravia memakai peringkat relevansi leksikal bawaan.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className={labelClass}>Model Embedding</label>
+            <input
+              value={settings.embedding_model || ''}
+              onChange={(e) => set('embedding_model', e.target.value)}
+              placeholder="text-embedding-3-small / text-embedding-004"
+              className={`${inputClass} font-mono`}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Base URL Embedding</label>
+            <input
+              value={settings.embedding_base_url || ''}
+              onChange={(e) => set('embedding_base_url', e.target.value)}
+              placeholder={settings.llm_base_url || 'Sama dengan Base URL chat'}
+              className={`${inputClass} font-mono`}
+            />
+          </div>
+          {secretInput('embedding_api_key', 'API Key Embedding', 'Sama dengan API Key chat')}
         </div>
       </section>
 

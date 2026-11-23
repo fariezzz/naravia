@@ -1,89 +1,54 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import {
-  ArrowLeft,
-  Send,
-  RotateCcw,
-  Edit3,
-  Trash2,
-  Bookmark,
-  ChevronLeft,
-  ChevronRight,
-  Sliders,
-  Plus,
-  Globe,
-  AlertCircle,
-  Check,
-  X,
-  Copy,
-  Square,
-  MoreHorizontal,
-  Rewind,
-} from 'lucide-react';
+import { AlertCircle, ChevronUp, Globe, X } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import ConfirmModal from '@/components/ConfirmModal';
-import FormattedMessage from '@/components/FormattedMessage';
-import { getClientCache, setClientCache, invalidateClientCache } from '@/lib/clientCache';
-
-interface MessageItem {
-  id: string;
-  chat_id: string;
-  role: 'user' | 'character';
-  content: string;
-  alternatives: string[];
-  active_alt_index: number;
-  is_pinned_memory: boolean;
-  created_at: string;
-}
+import ChatHeader from '@/components/chat/ChatHeader';
+import ChatInput from '@/components/chat/ChatInput';
+import ChatSettingsDrawer from '@/components/chat/ChatSettingsDrawer';
+import MessageBubble from '@/components/chat/MessageBubble';
+import { MatchedLoreBadge, MessageItem, PersonaItem } from '@/components/chat/types';
+import { getClientCache, invalidateClientCache, setClientCache } from '@/lib/clientCache';
 
 export default function ChatRoomPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const chatId = params.id;
 
-  const [chat, setChat] = useState<any>(() => {
-    return getClientCache<any>(`chat_room_${chatId}`)?.chat || null;
-  });
-  const [character, setCharacter] = useState<any>(() => {
-    return getClientCache<any>(`chat_room_${chatId}`)?.character || null;
-  });
-  const [messages, setMessages] = useState<MessageItem[]>(() => {
-    return getClientCache<any>(`chat_room_${chatId}`)?.messages || [];
-  });
-  const [memories, setMemories] = useState<any[]>(() => {
-    return getClientCache<any>(`chat_room_${chatId}`)?.memories || [];
-  });
-  const [otherChats, setOtherChats] = useState<any[]>(() => {
-    return getClientCache<any>(`chat_room_${chatId}`)?.otherChats || [];
-  });
-  const [matchedLore, setMatchedLore] = useState<any[]>([]);
-  const [personas, setPersonas] = useState<any[]>(() => {
-    return getClientCache<any>(`chat_room_${chatId}`)?.personas || [];
-  });
-  const [userPersona, setUserPersona] = useState<{
-    id?: string;
-    display_name: string;
-    avatar: string;
-  }>(() => {
+  const [chat, setChat] = useState<any>(() => getClientCache<any>(`chat_room_${chatId}`)?.chat || null);
+  const [character, setCharacter] = useState<any>(() => getClientCache<any>(`chat_room_${chatId}`)?.character || null);
+  const [messages, setMessages] = useState<MessageItem[]>(
+    () => getClientCache<any>(`chat_room_${chatId}`)?.messages || []
+  );
+  const [totalMessages, setTotalMessages] = useState<number>(
+    () => getClientCache<any>(`chat_room_${chatId}`)?.totalMessages || 0
+  );
+  const [hasMoreMessages, setHasMoreMessages] = useState<boolean>(
+    () => Boolean(getClientCache<any>(`chat_room_${chatId}`)?.hasMoreMessages)
+  );
+  const [oldestCursor, setOldestCursor] = useState<string | null>(
+    () => getClientCache<any>(`chat_room_${chatId}`)?.oldestCursor || null
+  );
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
+  const [memories, setMemories] = useState<any[]>(() => getClientCache<any>(`chat_room_${chatId}`)?.memories || []);
+  const [otherChats, setOtherChats] = useState<any[]>(
+    () => getClientCache<any>(`chat_room_${chatId}`)?.otherChats || []
+  );
+  const [matchedLore, setMatchedLore] = useState<MatchedLoreBadge[]>([]);
+  const [personas, setPersonas] = useState<PersonaItem[]>(
+    () => getClientCache<any>(`chat_room_${chatId}`)?.personas || []
+  );
+  const [userPersona, setUserPersona] = useState<PersonaItem>(() => {
     const cached = getClientCache<any>(`chat_room_${chatId}`);
-    return (
-      cached?.userPersona || {
-        id: '',
-        display_name: 'Kamu',
-        avatar: '',
-      }
-    );
+    return cached?.userPersona || { id: '', display_name: 'Kamu', avatar: '' };
   });
 
-  const [loading, setLoading] = useState(() => {
-    const cached = getClientCache<any>(`chat_room_${chatId}`);
-    return !cached || !cached.chat;
-  });
+  const [loading, setLoading] = useState(() => !getClientCache<any>(`chat_room_${chatId}`)?.chat);
   const [sending, setSending] = useState(false);
-  // Karakter percakapan ini sudah dihapus pemiliknya; riwayat tetap bisa dibaca saja
   const [characterDeleted, setCharacterDeleted] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -93,16 +58,13 @@ export default function ChatRoomPage() {
   const [editingContent, setEditingContent] = useState('');
 
   const [showDrawer, setShowDrawer] = useState(false);
-  const [chatTitleInput, setChatTitleInput] = useState(() => {
-    return getClientCache<any>(`chat_room_${chatId}`)?.chat?.title || '';
-  });
+  const [chatTitleInput, setChatTitleInput] = useState(
+    () => getClientCache<any>(`chat_room_${chatId}`)?.chat?.title || ''
+  );
   const [tempInput, setTempInput] = useState(() => {
     const cached = getClientCache<any>(`chat_room_${chatId}`);
     return String(
-      cached?.chat?.temperature ??
-      cached?.defaultSettings?.temperature ??
-      cached?.character?.temperature_override ??
-      0.9
+      cached?.chat?.temperature ?? cached?.defaultSettings?.temperature ?? cached?.character?.temperature_override ?? 0.9
     );
   });
   const [maxTokensInput, setMaxTokensInput] = useState(() => {
@@ -118,20 +80,53 @@ export default function ChatRoomPage() {
 
   const [deleteChatModal, setDeleteChatModal] = useState(false);
   const [deleteMsgTarget, setDeleteMsgTarget] = useState<string | null>(null);
-  // Pesan yang dipilih sebagai titik mundur; pesan ini dan semua sesudahnya akan dihapus
   const [rewindTarget, setRewindTarget] = useState<string | null>(null);
   const [rewinding, setRewinding] = useState(false);
+  const [forkTarget, setForkTarget] = useState<string | null>(null);
+  const [forking, setForking] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
-  // Menu aksi pesan di layar mobile: hanya satu yang terbuka, arah dibuka ke atas bila ruang di bawah sempit
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const [ttsSupported, setTtsSupported] = useState(false);
   const [actionMenu, setActionMenu] = useState<{ id: string; up: boolean } | null>(null);
-  const actionMenuRef = useRef<HTMLDivElement>(null);
-  const messagesScrollRef = useRef<HTMLDivElement>(null);
-  const [streamingCharText, setStreamingCharText] = useState<string>('');
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
 
+  const actionMenuRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const skipAutoScrollRef = useRef(false);
+
+  useEffect(() => {
+    setTtsSupported(typeof window !== 'undefined' && 'speechSynthesis' in window);
+    return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  const handleToggleSpeak = (msg: MessageItem) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (speakingMsgId === msg.id) {
+      window.speechSynthesis.cancel();
+      setSpeakingMsgId(null);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    // Hilangkan tanda markdown ringan agar pengucapan TTS lebih natural
+    const plain = msg.content.replace(/[*_`>#]/g, '').trim();
+    if (!plain) return;
+    const utterance = new SpeechSynthesisUtterance(plain);
+    utterance.lang = 'id-ID';
+    const voices = window.speechSynthesis.getVoices();
+    const idVoice = voices.find((v) => v.lang.toLowerCase().startsWith('id'));
+    if (idVoice) utterance.voice = idVoice;
+    utterance.onend = () => setSpeakingMsgId((prev) => (prev === msg.id ? null : prev));
+    utterance.onerror = () => setSpeakingMsgId((prev) => (prev === msg.id ? null : prev));
+    setSpeakingMsgId(msg.id);
+    window.speechSynthesis.speak(utterance);
+  };
 
   const handleCopyMessage = async (msgId: string, text: string) => {
     try {
@@ -149,28 +144,23 @@ export default function ChatRoomPage() {
         document.body.removeChild(ta);
       }
       setCopiedMsgId(msgId);
-      setTimeout(() => {
-        setCopiedMsgId((prev) => (prev === msgId ? null : prev));
-      }, 2000);
+      setTimeout(() => setCopiedMsgId((prev) => (prev === msgId ? null : prev)), 2000);
     } catch {
       setError('Gagal menyalin teks pesan.');
     }
   };
 
   const loadRoom = async (isBackground = false) => {
-    if (!isBackground) {
-      const cached = getClientCache<any>(`chat_room_${chatId}`);
-      if (!cached || !cached.chat) setLoading(true);
+    if (!isBackground && !getClientCache<any>(`chat_room_${chatId}`)?.chat) {
+      setLoading(true);
     }
     setError('');
     try {
-      const [res, pRes] = await Promise.all([
-        fetch(`/api/chats/${chatId}`),
-        fetch('/api/persona'),
-      ]);
+      const [res, pRes] = await Promise.all([fetch(`/api/chats/${chatId}?limit=60`), fetch('/api/persona')]);
       const data = await res.json();
       const pData = await pRes.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Ruang percakapan tidak ditemukan.');
+
       const listPersonas = Array.isArray(data.personas)
         ? data.personas
         : Array.isArray(pData?.personas)
@@ -186,15 +176,15 @@ export default function ChatRoomPage() {
             avatar: resolvedPersona.avatar || '',
           }
         : userPersona;
+      if (resolvedPersona) setUserPersona(personaItem);
 
-      if (resolvedPersona) {
-        setUserPersona(personaItem);
-      }
       setChat(data.chat);
       setCharacter(data.character);
-      // Karakter sudah dihapus pemiliknya: riwayat tetap bisa dibaca, tapi pesan baru ditutup
       setCharacterDeleted(Boolean(data.characterDeleted));
       setMessages(data.messages || []);
+      setTotalMessages(Number(data.totalMessages ?? (data.messages?.length || 0)));
+      setHasMoreMessages(Boolean(data.hasMoreMessages));
+      setOldestCursor(data.oldestCursor || null);
       setMemories(data.memories || []);
       setOtherChats(data.otherChats || []);
 
@@ -211,6 +201,9 @@ export default function ChatRoomPage() {
         chat: data.chat,
         character: data.character,
         messages: data.messages || [],
+        totalMessages: Number(data.totalMessages ?? (data.messages?.length || 0)),
+        hasMoreMessages: Boolean(data.hasMoreMessages),
+        oldestCursor: data.oldestCursor || null,
         memories: data.memories || [],
         otherChats: data.otherChats || [],
         personas: listPersonas,
@@ -218,11 +211,47 @@ export default function ChatRoomPage() {
         defaultSettings: data.defaultSettings,
       });
     } catch (err) {
-      if (!chat) {
-        setError(err instanceof Error ? err.message : 'Gagal memuat percakapan.');
-      }
+      if (!chat) setError(err instanceof Error ? err.message : 'Gagal memuat percakapan.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLoadOlderMessages = async () => {
+    if (loadingOlder || !hasMoreMessages || !oldestCursor) return;
+    setLoadingOlder(true);
+    const box = messagesScrollRef.current;
+    const prevScrollHeight = box?.scrollHeight || 0;
+    const prevScrollTop = box?.scrollTop || 0;
+
+    try {
+      const res = await fetch(
+        `/api/chats/${chatId}?messagesOnly=1&limit=50&before=${encodeURIComponent(oldestCursor)}`
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal memuat pesan lama.');
+
+      const older: MessageItem[] = data.messages || [];
+      if (older.length > 0) {
+        skipAutoScrollRef.current = true;
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id));
+          return [...older.filter((m) => !existingIds.has(m.id)), ...prev];
+        });
+        setHasMoreMessages(Boolean(data.hasMoreMessages));
+        setOldestCursor(data.oldestCursor || null);
+        requestAnimationFrame(() => {
+          if (box) {
+            box.scrollTop = prevScrollTop + (box.scrollHeight - prevScrollHeight);
+          }
+        });
+      } else {
+        setHasMoreMessages(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat pesan lama.');
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -234,6 +263,10 @@ export default function ChatRoomPage() {
   }, [chatId]);
 
   useEffect(() => {
+    if (skipAutoScrollRef.current) {
+      skipAutoScrollRef.current = false;
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, sending]);
 
@@ -254,7 +287,6 @@ export default function ChatRoomPage() {
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        // Kembalikan fokus ke tombol menu agar pengguna keyboard tidak kehilangan posisi
         actionMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
         setActionMenu(null);
       }
@@ -267,13 +299,49 @@ export default function ChatRoomPage() {
     };
   }, [actionMenu]);
 
+  // Pintasan keyboard desktop: Esc (batal edit / tutup drawer / stop stream), Alt+ArrowLeft/Right (swipe balasan terakhir)
+  useEffect(() => {
+    const onGlobalKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (editingMsgId) {
+          setEditingMsgId(null);
+          return;
+        }
+        if (showDrawer) {
+          setShowDrawer(false);
+          return;
+        }
+        if (sending) {
+          handleStopStreaming();
+        }
+        return;
+      }
+
+      if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        if (sending || regeneratingId) return;
+        const lastChar = [...messages].reverse().find((m) => m.role === 'character');
+        if (!lastChar) return;
+        e.preventDefault();
+        const curIdx = lastChar.active_alt_index || 0;
+        const altLen = lastChar.alternatives?.length || 1;
+        if (e.key === 'ArrowLeft' && curIdx > 0) {
+          handleSwipeSelect(lastChar, curIdx - 1);
+        } else if (e.key === 'ArrowRight') {
+          if (curIdx < altLen - 1) handleSwipeSelect(lastChar, curIdx + 1);
+          else handleGenerateSwipeOrRegenerate(lastChar);
+        }
+      }
+    };
+    window.addEventListener('keydown', onGlobalKey);
+    return () => window.removeEventListener('keydown', onGlobalKey);
+  }, [editingMsgId, showDrawer, sending, regeneratingId, messages]);
+
   const toggleActionMenu = (msgId: string, trigger: HTMLElement) => {
     if (actionMenu?.id === msgId) {
       setActionMenu(null);
       return;
     }
-    // Perkiraan tinggi menu empat baris; dipakai untuk memilih arah buka agar menu tidak terpotong
-    const MENU_HEIGHT = 150;
+    const MENU_HEIGHT = 190;
     const btn = trigger.getBoundingClientRect();
     const box = messagesScrollRef.current?.getBoundingClientRect();
     const spaceBelow = (box ? box.bottom : window.innerHeight) - btn.bottom;
@@ -281,7 +349,6 @@ export default function ChatRoomPage() {
     setActionMenu({ id: msgId, up: spaceBelow < MENU_HEIGHT && spaceAbove > spaceBelow });
   };
 
-  // Menu ditutup lebih dulu, lalu aksi yang sama dengan tombol desktop dijalankan
   const runMenuAction = (action: () => void) => {
     setActionMenu(null);
     action();
@@ -294,117 +361,11 @@ export default function ChatRoomPage() {
     }
   };
 
-  const handleSendMessage = async () => {
-    const content = inputText.trim();
-    if (sending) return;
-
-    // Jika pesan kosong dan belum ada percakapan sama sekali, jangan kirim
-    if (!content && messages.length === 0) return;
-
-    const isContinue = !content;
-    const tempUserMsgId = !isContinue ? `temp-user-${Date.now()}` : null;
-
-    if (!isContinue && tempUserMsgId) {
-      const optimisticUserMessage: MessageItem = {
-        id: tempUserMsgId,
-        chat_id: chatId,
-        role: 'user',
-        content,
-        alternatives: [content],
-        active_alt_index: 0,
-        is_pinned_memory: false,
-        created_at: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, optimisticUserMessage]);
-    }
-
-    setSending(true);
-    setError('');
-    setInputText('');
-    setStreamingCharText('');
-    setStreamingMsgId(null);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = '';
-    }
-
-    const abortCtrl = new AbortController();
-    abortControllerRef.current = abortCtrl;
-
-    try {
-      const res = await fetch('/api/messages/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: abortCtrl.signal,
-        body: JSON.stringify({
-          action: 'send',
-          chatId,
-          content,
-          isContinue,
-        }),
-      });
-
-      if (!res.ok) {
-        if (tempUserMsgId) {
-          setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
-          setInputText(content);
-        }
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Gagal memulai streaming balasan.');
-      }
-
-      const { accumulatedLiveText, hadError } = await consumeMessageStream(res, { tempUserMsgId });
-      if (hadError && !accumulatedLiveText) {
-        setInputText(content);
-      }
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        // Balasan sengaja dihentikan oleh pengguna
-      } else {
-        if (tempUserMsgId) {
-          setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
-        }
-        setError(err instanceof Error ? err.message : 'Gagal mengirim pesan.');
-      }
-    } finally {
-      abortControllerRef.current = null;
-      setSending(false);
-      setStreamingCharText('');
-      setStreamingMsgId(null);
-      // Buang bubble karakter yang tetap kosong (misal dihentikan sebelum karakter pertama masuk)
-      setMessages((prev) => prev.filter((m) => !(m.role === 'character' && !m.content.trim())));
-    }
-  };
-
-  const handleSwipeSelect = async (msg: MessageItem, newIndex: number) => {
-    if (newIndex < 0 || newIndex >= msg.alternatives.length) return;
-    try {
-      const res = await fetch('/api/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'swipe_select',
-          messageId: msg.id,
-          index: newIndex,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.message) {
-        setMessages((prev) => prev.map((m) => (m.id === msg.id ? data.message : m)));
-      }
-    } catch {
-      setError('Gagal mengganti alternatif balasan.');
-    }
-  };
-
-  // Memproses respons streaming SSE umum dari /api/messages/stream
-  // Dipakai bersama oleh pengiriman pesan baru dan regenerate/swipe alternatif baru
   const consumeMessageStream = async (
     res: Response,
     opts: { targetMsgId?: string | null; tempUserMsgId?: string | null } = {}
   ) => {
-    if (!res.body) {
-      throw new Error('Streaming body tidak diterima dari server.');
-    }
+    if (!res.body) throw new Error('Streaming body tidak diterima dari server.');
 
     const { targetMsgId, tempUserMsgId } = opts;
     const reader = res.body.getReader();
@@ -424,82 +385,157 @@ export default function ChatRoomPage() {
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (trimmed.startsWith('data: ')) {
-          const jsonStr = trimmed.slice(6).trim();
-          if (!jsonStr) continue;
+        if (!trimmed.startsWith('data: ')) continue;
+        const jsonStr = trimmed.slice(6).trim();
+        if (!jsonStr) continue;
 
-          try {
-            const event = JSON.parse(jsonStr);
+        try {
+          const event = JSON.parse(jsonStr);
+          if (event.type === 'start') {
+            if (!activeCharMsgId) activeCharMsgId = event.characterMessageId;
+            setStreamingMsgId(activeCharMsgId);
+            if (Array.isArray(event.matchedLore)) setMatchedLore(event.matchedLore);
 
-            if (event.type === 'start') {
-              if (!activeCharMsgId) activeCharMsgId = event.characterMessageId;
-              setStreamingMsgId(activeCharMsgId);
-
-              setMessages((prev) => {
-                let list = tempUserMsgId && event.userMessage
+            setMessages((prev) => {
+              let list =
+                tempUserMsgId && event.userMessage
                   ? prev.map((m) => (m.id === tempUserMsgId ? event.userMessage : m))
                   : prev;
-                if (!event.isRegenerate && !list.some((m) => m.id === activeCharMsgId)) {
-                  list = [
-                    ...list,
-                    {
-                      id: activeCharMsgId,
-                      chat_id: chatId,
-                      role: 'character',
-                      content: '',
-                      alternatives: [''],
-                      active_alt_index: 0,
-                      is_pinned_memory: false,
-                      created_at: new Date().toISOString(),
-                    },
-                  ];
-                }
-                return list;
-              });
-            } else if (event.type === 'chunk') {
-              accumulatedLiveText += event.text;
-              setStreamingCharText(accumulatedLiveText);
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === activeCharMsgId ? { ...m, content: accumulatedLiveText } : m
-                )
-              );
-            } else if (event.type === 'done' || event.type === 'stopped') {
-              const finalMsg: MessageItem = event.message;
-              setMessages((prev) => prev.map((m) => (m.id === activeCharMsgId ? finalMsg : m)));
-
-              if (event.title) {
-                setChat((prev: any) => (prev ? { ...prev, title: event.title } : prev));
-                setChatTitleInput(event.title);
+              if (!event.isRegenerate && !list.some((m) => m.id === activeCharMsgId)) {
+                list = [
+                  ...list,
+                  {
+                    id: activeCharMsgId,
+                    chat_id: chatId,
+                    role: 'character',
+                    content: '',
+                    alternatives: [''],
+                    active_alt_index: 0,
+                    is_pinned_memory: false,
+                    created_at: new Date().toISOString(),
+                  },
+                ];
               }
-
-              setClientCache(`chat_room_${chatId}`, null);
-            } else if (event.type === 'error') {
-              setError(event.error);
-              hadError = true;
-              // Buang bubble karakter yang masih kosong (bukan alur regenerate) beserta pesan optimistik pengguna
-              if (!accumulatedLiveText && !targetMsgId) {
-                setMessages((prev) =>
-                  prev.filter((m) => m.id !== activeCharMsgId && (!tempUserMsgId || m.id !== tempUserMsgId))
-                );
-              }
+              return list;
+            });
+          } else if (event.type === 'chunk') {
+            accumulatedLiveText += event.text;
+            setMessages((prev) =>
+              prev.map((m) => (m.id === activeCharMsgId ? { ...m, content: accumulatedLiveText } : m))
+            );
+          } else if (event.type === 'done' || event.type === 'stopped') {
+            const finalMsg: MessageItem = event.message;
+            setMessages((prev) => prev.map((m) => (m.id === activeCharMsgId ? finalMsg : m)));
+            if (!targetMsgId) setTotalMessages((n) => n + (tempUserMsgId ? 2 : 1));
+            if (event.title) {
+              setChat((prev: any) => (prev ? { ...prev, title: event.title } : prev));
+              setChatTitleInput(event.title);
             }
-          } catch {}
-        }
+            setClientCache(`chat_room_${chatId}`, null);
+          } else if (event.type === 'error') {
+            setError(event.error);
+            hadError = true;
+            if (!accumulatedLiveText && !targetMsgId) {
+              setMessages((prev) =>
+                prev.filter((m) => m.id !== activeCharMsgId && (!tempUserMsgId || m.id !== tempUserMsgId))
+              );
+            }
+          }
+        } catch {}
       }
     }
 
     return { activeCharMsgId, accumulatedLiveText, hadError };
   };
 
+  const handleSendMessage = async () => {
+    const content = inputText.trim();
+    if (sending) return;
+    if (!content && messages.length === 0) return;
+
+    const isContinue = !content;
+    const tempUserMsgId = !isContinue ? `temp-user-${Date.now()}` : null;
+
+    if (!isContinue && tempUserMsgId) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: tempUserMsgId,
+          chat_id: chatId,
+          role: 'user',
+          content,
+          alternatives: [content],
+          active_alt_index: 0,
+          is_pinned_memory: false,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
+
+    setSending(true);
+    setError('');
+    setInputText('');
+    setStreamingMsgId(null);
+    if (textareaRef.current) textareaRef.current.style.height = '';
+
+    const abortCtrl = new AbortController();
+    abortControllerRef.current = abortCtrl;
+
+    try {
+      const res = await fetch('/api/messages/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: abortCtrl.signal,
+        body: JSON.stringify({ action: 'send', chatId, content, isContinue }),
+      });
+
+      if (!res.ok) {
+        if (tempUserMsgId) {
+          setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
+          setInputText(content);
+        }
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Gagal memulai streaming balasan.');
+      }
+
+      const { accumulatedLiveText, hadError } = await consumeMessageStream(res, { tempUserMsgId });
+      if (hadError && !accumulatedLiveText) setInputText(content);
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        if (tempUserMsgId) setMessages((prev) => prev.filter((m) => m.id !== tempUserMsgId));
+        setError(err instanceof Error ? err.message : 'Gagal mengirim pesan.');
+      }
+    } finally {
+      abortControllerRef.current = null;
+      setSending(false);
+      setStreamingMsgId(null);
+      setMessages((prev) => prev.filter((m) => !(m.role === 'character' && !m.content.trim())));
+    }
+  };
+
+  const handleSwipeSelect = async (msg: MessageItem, newIndex: number) => {
+    if (newIndex < 0 || newIndex >= msg.alternatives.length) return;
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'swipe_select', messageId: msg.id, index: newIndex }),
+      });
+      const data = await res.json();
+      if (res.ok && data.message) {
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? data.message : m)));
+      }
+    } catch {
+      setError('Gagal mengganti alternatif balasan.');
+    }
+  };
+
   const handleGenerateSwipeOrRegenerate = async (msg: MessageItem) => {
     if (regeneratingId || sending) return;
     setRegeneratingId(msg.id);
     setError('');
-    setStreamingCharText('');
     setStreamingMsgId(null);
 
-    // Geser bubble ke slot alternatif baru seketika (optimistik), tanpa menunggu stream selesai
     const previousMsg = msg;
     const baseAlternatives = msg.alternatives && msg.alternatives.length > 0 ? msg.alternatives : [msg.content];
     const newAltIndex = baseAlternatives.length;
@@ -510,11 +546,8 @@ export default function ChatRoomPage() {
           : m
       )
     );
-    // Kembalikan ke alternatif sebelumnya hanya jika slot baru masih kosong (belum ada teks yang masuk)
     const revertIfEmpty = () => {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === previousMsg.id && !m.content.trim() ? previousMsg : m))
-      );
+      setMessages((prev) => prev.map((m) => (m.id === previousMsg.id && !m.content.trim() ? previousMsg : m)));
     };
 
     const abortCtrl = new AbortController();
@@ -525,10 +558,7 @@ export default function ChatRoomPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: abortCtrl.signal,
-        body: JSON.stringify({
-          action: 'swipe_generate',
-          messageId: msg.id,
-        }),
+        body: JSON.stringify({ action: 'swipe_generate', messageId: msg.id }),
       });
 
       if (!res.ok) {
@@ -540,7 +570,6 @@ export default function ChatRoomPage() {
       if (hadError) revertIfEmpty();
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        // Dihentikan pengguna: simpan teks parsial ke slot alternatif baru, atau kembalikan jika masih kosong
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== previousMsg.id) return m;
@@ -557,7 +586,6 @@ export default function ChatRoomPage() {
     } finally {
       abortControllerRef.current = null;
       setRegeneratingId(null);
-      setStreamingCharText('');
       setStreamingMsgId(null);
     }
   };
@@ -568,11 +596,7 @@ export default function ChatRoomPage() {
       const res = await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'edit',
-          messageId,
-          content: editingContent.trim(),
-        }),
+        body: JSON.stringify({ action: 'edit', messageId, content: editingContent.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal menyimpan perubahan pesan.');
@@ -589,25 +613,13 @@ export default function ChatRoomPage() {
       await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'delete',
-          messageId: deleteMsgTarget,
-        }),
+        body: JSON.stringify({ action: 'delete', messageId: deleteMsgTarget }),
       });
       const remainingMessages = messages.filter((m) => m.id !== deleteMsgTarget);
       setMessages(remainingMessages);
+      setTotalMessages((n) => Math.max(0, n - 1));
       setDeleteMsgTarget(null);
-
-      // Perbarui in-memory client cache secara langsung agar pesan yang dihapus tidak pernah muncul lagi saat navigasi
-      setClientCache(`chat_room_${chatId}`, {
-        chat,
-        character,
-        messages: remainingMessages,
-        memories,
-        otherChats,
-        personas,
-        userPersona,
-      });
+      invalidateClientCache(`chat_room_${chatId}`);
     } catch {
       setError('Gagal menghapus pesan.');
     }
@@ -627,34 +639,41 @@ export default function ChatRoomPage() {
 
       const deletedIds: string[] = data.deletedMessageIds || [];
       const deletedMemIds: string[] = data.deletedMemoryIds || [];
-
-      const remainingMessages = messages.filter((m) => !deletedIds.includes(m.id));
-      const remainingMemories = memories.filter((m) => !deletedMemIds.includes(m.id));
-      // Ringkasan yang dikosongkan server harus ikut hilang di tampilan,
-      // supaya kejadian yang sudah dihapus tidak lagi terbaca di panel samping
-      const nextChat = data.chat ? { ...chat, ...data.chat } : chat;
-
-      setMessages(remainingMessages);
-      setMemories(remainingMemories);
-      setChat(nextChat);
+      setMessages((prev) => prev.filter((m) => !deletedIds.includes(m.id)));
+      setTotalMessages((n) => Math.max(0, n - deletedIds.length));
+      setMemories((prev) => prev.filter((m) => !deletedMemIds.includes(m.id)));
+      if (data.chat) setChat((prev: any) => ({ ...prev, ...data.chat }));
       setRewindTarget(null);
 
-      setClientCache(`chat_room_${chatId}`, {
-        chat: nextChat,
-        character,
-        messages: remainingMessages,
-        memories: remainingMemories,
-        otherChats,
-        personas,
-        userPersona,
-      });
-      // Daftar chat di beranda menampilkan cuplikan pesan terakhir, jadi harus dimuat ulang
+      invalidateClientCache(`chat_room_${chatId}`);
       invalidateClientCache('home_recent_chats');
       invalidateClientCache('chats_list');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal memundurkan percakapan.');
     } finally {
       setRewinding(false);
+    }
+  };
+
+  const handleConfirmFork = async () => {
+    if (!forkTarget) return;
+    setForking(true);
+    try {
+      const res = await fetch(`/api/chats/${chatId}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: forkTarget }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal mencabangkan percakapan.');
+      setForkTarget(null);
+      invalidateClientCache('home_recent_chats');
+      invalidateClientCache('chats_list');
+      if (data.chat?.id) router.push(`/chat/${data.chat.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal mencabangkan percakapan.');
+    } finally {
+      setForking(false);
     }
   };
 
@@ -667,9 +686,7 @@ export default function ChatRoomPage() {
           await fetch(`/api/memories?id=${encodeURIComponent(linked.id)}`, { method: 'DELETE' });
           setMemories((prev) => prev.filter((m) => m.id !== linked.id));
         }
-        setMessages((prev) =>
-          prev.map((m) => (m.id === msg.id ? { ...m, is_pinned_memory: false } : m))
-        );
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, is_pinned_memory: false } : m)));
         return;
       }
 
@@ -687,9 +704,7 @@ export default function ChatRoomPage() {
       const data = await res.json();
       if (res.ok && data.memory) {
         setMemories((prev) => [data.memory, ...prev]);
-        setMessages((prev) =>
-          prev.map((m) => (m.id === msg.id ? { ...m, is_pinned_memory: true } : m))
-        );
+        setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, is_pinned_memory: true } : m)));
       }
     } catch {
       setError('Gagal memperbarui status memori pesan.');
@@ -699,11 +714,7 @@ export default function ChatRoomPage() {
   const handleSwitchChatPersona = async (personaId: string) => {
     const chosen = personas.find((p) => p.id === personaId);
     if (chosen) {
-      setUserPersona({
-        id: chosen.id,
-        display_name: chosen.display_name || 'Kamu',
-        avatar: chosen.avatar || '',
-      });
+      setUserPersona({ id: chosen.id, display_name: chosen.display_name || 'Kamu', avatar: chosen.avatar || '' });
     }
     try {
       const res = await fetch(`/api/chats/${chatId}`, {
@@ -782,9 +793,7 @@ export default function ChatRoomPage() {
         body: JSON.stringify({ characterId: character.id, greetingIndex: 0 }),
       });
       const data = await res.json();
-      if (res.ok && data.chat) {
-        router.push(`/chat/${data.chat.id}`);
-      }
+      if (res.ok && data.chat) router.push(`/chat/${data.chat.id}`);
     } catch {
       setError('Gagal memulai percakapan baru.');
     }
@@ -802,12 +811,10 @@ export default function ChatRoomPage() {
     }
   };
 
-  // Jumlah pesan yang akan dihapus bila mundur dikonfirmasi, dihitung dari
-  // titik pesan terpilih sampai pesan terakhir
   const rewindCutIndex = rewindTarget ? messages.findIndex((m) => m.id === rewindTarget) : -1;
   const rewindInfo = {
     count: rewindCutIndex >= 0 ? messages.length - rewindCutIndex : 0,
-    isFirst: rewindCutIndex === 0,
+    isFirst: rewindCutIndex === 0 && !hasMoreMessages,
   };
 
   if (loading) {
@@ -821,109 +828,53 @@ export default function ChatRoomPage() {
   if (!chat || !character) {
     return (
       <div className="max-w-4xl w-full mx-auto px-4 py-8 space-y-4">
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-700">
+        <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-sm text-rose-700 dark:text-rose-300">
           {error || 'Percakapan tidak ditemukan.'}
         </div>
-        <Link href="/" className="text-sm font-medium text-indigo-600 hover:underline">
+        <Link href="/" className="text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
           Kembali ke Beranda
         </Link>
       </div>
     );
   }
 
+  const isBusy = sending || Boolean(streamingMsgId) || Boolean(regeneratingId);
+  const hiddenOlderCount = Math.max(0, totalMessages - messages.length);
+  const lastCharacterMsgId = [...messages].reverse().find((m) => m.role === 'character')?.id || null;
+
+  const handleBack = () => {
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push('/');
+    }
+  };
+
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden max-w-5xl w-full mx-auto px-0 sm:px-4 py-0 sm:py-3 min-h-0">
-      {/* Bar Header Ruang Chat (Sticky & Fixed di Atas) */}
-      <div className="bg-white dark:bg-[#0c1220] border-b sm:border border-slate-200 dark:border-slate-800 px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2 sm:gap-3 sm:rounded-2xl shadow-2xs shrink-0 z-20 transition-colors">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link
-            href={`/characters/${character.id}`}
-            className="w-8 h-8 rounded-lg border border-slate-200 dark:border-slate-800 inline-flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
-            title="Profil Karakter"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <Link href={`/characters/${character.id}`} className="flex items-center gap-2.5 min-w-0">
-            <CharacterAvatar name={character.name} avatar={character.avatar} size="sm" />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h1 className="text-sm font-bold text-slate-900 dark:text-white truncate">{character.name}</h1>
-                {character.world_name && (
-                  <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 text-[10px] font-medium">
-                    <Globe className="w-2.5 h-2.5" />
-                    <span>{character.world_name}</span>
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{chat.title}</p>
-            </div>
-          </Link>
-        </div>
+    <div className="flex-1 flex flex-col h-full overflow-hidden max-w-6xl w-full mx-auto px-0 sm:px-4 py-0 sm:py-3 min-h-0">
+      <ChatHeader
+        character={character}
+        chatTitle={chat.title}
+        personas={personas}
+        userPersona={userPersona}
+        showDrawer={showDrawer}
+        onBack={handleBack}
+        onSwitchPersona={handleSwitchChatPersona}
+        onCreateNewRoom={handleCreateNewRoomSameCharacter}
+        onToggleDrawer={() => setShowDrawer((p) => !p)}
+      />
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          {personas.length > 0 && (
-            <div
-              className="h-8 pl-1.5 pr-2 rounded-lg border border-slate-200 bg-slate-50/70 inline-flex items-center gap-1.5"
-              title="Ganti Persona Kamu di Ruang Chat Ini"
-            >
-              <CharacterAvatar
-                name={userPersona.display_name}
-                avatar={userPersona.avatar}
-                size="xs"
-              />
-              <select
-                value={userPersona.id || ''}
-                onChange={(e) => handleSwitchChatPersona(e.target.value)}
-                aria-label="Pilih Persona"
-                className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer max-w-[85px] sm:max-w-[115px] truncate"
-              >
-                {personas.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.display_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={handleCreateNewRoomSameCharacter}
-            className="h-8 w-8 sm:w-auto sm:px-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center justify-center gap-1 whitespace-nowrap"
-            title="Mulai Alur Chat Baru dengan Karakter Ini"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Chat Baru</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowDrawer((p) => !p)}
-            className={`h-8 px-2 sm:px-2.5 rounded-lg border text-xs font-medium inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors ${
-              showDrawer
-                ? 'bg-slate-900 border-slate-900 text-white'
-                : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-            }`}
-            title="Pengaturan Chat"
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Pengaturan Chat</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Indikator Lorebook Aktif jika kata kunci terpicu */}
       {matchedLore.length > 0 && (
-        <div className="mt-2 px-3.5 py-2 rounded-xl bg-teal-50/80 border border-teal-200 text-xs text-teal-900 flex items-center justify-between gap-2">
+        <div className="mt-2 px-3.5 py-2 rounded-xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-900 text-xs text-teal-900 dark:text-teal-200 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 truncate">
-            <Globe className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+            <Globe className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
             <span className="font-semibold">Lorebook Aktif:</span>
-            <span className="truncate">
-              {matchedLore.map((l) => l.title).join(', ')}
-            </span>
+            <span className="truncate">{matchedLore.map((l) => l.title).join(', ')}</span>
           </div>
           <button
             type="button"
             onClick={() => setMatchedLore([])}
-            className="text-[11px] text-teal-700 hover:underline shrink-0"
+            className="text-[11px] text-teal-700 dark:text-teal-300 hover:underline shrink-0"
           >
             Tutup
           </button>
@@ -931,341 +882,75 @@ export default function ChatRoomPage() {
       )}
 
       {error && (
-        <div className="mt-3 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-start justify-between gap-2">
+        <div className="mt-3 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start justify-between gap-2">
           <div className="flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setError('')}
-            className="text-rose-500 hover:text-rose-800"
-          >
+          <button type="button" onClick={() => setError('')} className="text-rose-500 hover:text-rose-800">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-      {/* Area Utama: Alur Bubble Chat + Drawer Pengaturan Samping */}
       <div className="flex-1 flex gap-4 mt-0 sm:mt-3 min-h-0">
-        {/* Daftar Pesan */}
         <div className="flex-1 bg-white dark:bg-[#0c1220] border-0 sm:border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden sm:rounded-2xl shadow-none sm:shadow-2xs transition-colors">
           <div ref={messagesScrollRef} className="flex-1 overflow-y-auto px-3.5 py-4 sm:p-6 space-y-4 sm:space-y-5">
-            {messages.map((msg) => {
-              const isChar = msg.role === 'character';
-              const altCount = msg.alternatives?.length || 1;
-              const currentAltIdx = msg.active_alt_index || 0;
-              const isEditingThis = editingMsgId === msg.id;
-              const isRegeneratingThis = regeneratingId === msg.id;
-              const isMenuOpen = actionMenu?.id === msg.id;
-              // Mundur dinonaktifkan selama ada respons yang sedang dibuat,
-              // agar riwayat tidak terhapus di tengah proses pembuatan pesan
-              const isBusy = sending || Boolean(streamingMsgId) || Boolean(regeneratingId);
-
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex items-start gap-2.5 sm:gap-3 ${isChar ? 'justify-start' : 'justify-end'}`}
+            {hasMoreMessages && (
+              <div className="flex justify-center pb-2">
+                <button
+                  type="button"
+                  disabled={loadingOlder}
+                  onClick={handleLoadOlderMessages}
+                  className="h-8 px-3.5 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 inline-flex items-center gap-1.5 disabled:opacity-50"
                 >
-                  {isChar && (
-                    <CharacterAvatar name={character.name} avatar={character.avatar} size="sm" />
-                  )}
+                  <ChevronUp className="w-3.5 h-3.5" />
+                  <span>
+                    {loadingOlder
+                      ? 'Memuat pesan lama...'
+                      : `Muat pesan lebih lama${hiddenOlderCount > 0 ? ` (${hiddenOlderCount} tersisa)` : ''}`}
+                  </span>
+                </button>
+              </div>
+            )}
 
-                  <div
-                    className={`max-w-[92%] sm:max-w-[78%] min-w-0 space-y-1.5 ${
-                      isChar ? 'items-start' : 'items-end flex flex-col'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 px-1">
-                      <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                        {isChar ? character.name : userPersona.display_name || 'Kamu'}
-                      </span>
-                      {msg.is_pinned_memory && (
-                        <span className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-medium inline-flex items-center gap-0.5">
-                          <Bookmark className="w-2.5 h-2.5 fill-indigo-600 dark:fill-indigo-400" />
-                          <span>Diingat</span>
-                        </span>
-                      )}
-                    </div>
-
-                    {isEditingThis ? (
-                      <div className="w-full min-w-[280px] sm:min-w-[420px] bg-slate-50 border border-indigo-300 rounded-2xl p-3 space-y-2">
-                        <textarea
-                          rows={4}
-                          value={editingContent}
-                          onChange={(e) => setEditingContent(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
-                        />
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setEditingMsgId(null)}
-                            className="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-100 inline-flex items-center gap-1"
-                          >
-                            <X className="w-3 h-3" />
-                            <span>Batal</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleSaveEditMessage(msg.id)}
-                            className="h-7 px-3 rounded-lg bg-indigo-600 text-white text-xs font-medium inline-flex items-center gap-1"
-                          >
-                            <Check className="w-3 h-3" />
-                            <span>Simpan</span>
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div
-                        className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line break-words [overflow-wrap:anywhere] ${
-                          isChar
-                            ? 'bg-slate-100 dark:bg-[#151c2e] text-slate-900 dark:text-slate-100 rounded-tl-xs'
-                            : 'bg-slate-900 dark:bg-indigo-600 text-white rounded-tr-xs'
-                        }`}
-                      >
-                        {isChar && !msg.content.trim() && (isRegeneratingThis || streamingMsgId === msg.id) ? (
-                          // Indikator mengetik ditampilkan di dalam bubble yang sama, hilang saat karakter pertama masuk
-                          <span className="text-xs text-slate-500 dark:text-slate-400 italic">
-                            {character.name} sedang mengetik balasan...
-                          </span>
-                        ) : (
-                          <FormattedMessage content={msg.content} isUser={!isChar} />
-                        )}
-                      </div>
-                    )}
-
-                    {/* Bar Aksi per Pesan & Navigasi Swipe (disembunyikan selama balasan baru masih di-stream) */}
-                    <div
-                      className={`flex-wrap items-center gap-1.5 px-1 text-slate-400 dark:text-slate-500 ${
-                        streamingMsgId === msg.id && !isRegeneratingThis ? 'hidden' : 'flex'
-                      }`}
-                    >
-                      {isChar && (
-                        <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg px-1.5 py-0.5 text-[11px] text-slate-600 dark:text-slate-300 mr-1">
-                          <button
-                            type="button"
-                            disabled={currentAltIdx <= 0 || isRegeneratingThis}
-                            onClick={() => handleSwipeSelect(msg, currentAltIdx - 1)}
-                            className="p-0.5 hover:text-slate-900 dark:hover:text-white disabled:opacity-30"
-                            title="Alternatif Sebelumnya"
-                          >
-                            <ChevronLeft className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="font-medium tabular-nums">
-                            {currentAltIdx + 1}/{altCount}
-                          </span>
-                          <button
-                            type="button"
-                            disabled={isRegeneratingThis}
-                            onClick={() => {
-                              if (currentAltIdx < altCount - 1) {
-                                handleSwipeSelect(msg, currentAltIdx + 1);
-                              } else {
-                                handleGenerateSwipeOrRegenerate(msg);
-                              }
-                            }}
-                            className="p-0.5 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-30"
-                            title={
-                              currentAltIdx < altCount - 1
-                                ? 'Alternatif Berikutnya'
-                                : 'Buat Alternatif Swipe Baru'
-                            }
-                          >
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
-
-                      {isChar && (
-                        <button
-                          type="button"
-                          disabled={isRegeneratingThis}
-                          onClick={() => handleGenerateSwipeOrRegenerate(msg)}
-                          className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 inline-flex items-center gap-1 text-[11px]"
-                          title="Minta Jawaban Ulang (Regenerate)"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          <span>Ulang</span>
-                        </button>
-                      )}
-
-                      {/* Salin, Edit, Ingat Ini, dan Hapus tampil berderet mulai breakpoint md; di bawahnya masuk menu */}
-                      <button
-                        type="button"
-                        onClick={() => handleCopyMessage(msg.id, msg.content)}
-                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hidden md:inline-flex items-center gap-1 text-[11px] transition-colors ${
-                          copiedMsgId === msg.id ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'hover:text-slate-700 dark:hover:text-slate-200'
-                        }`}
-                        title="Salin Isi Pesan"
-                      >
-                        {copiedMsgId === msg.id ? (
-                          <>
-                            <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                            <span>Tersalin</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3 h-3" />
-                            <span>Salin</span>
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingMsgId(msg.id);
-                          setEditingContent(msg.content);
-                        }}
-                        className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 hidden md:inline-flex items-center gap-1 text-[11px]"
-                        title="Edit Pesan"
-                      >
-                        <Edit3 className="w-3 h-3" />
-                        <span>Edit</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handlePinMessageToMemory(msg)}
-                        className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hidden md:inline-flex items-center gap-1 text-[11px] ${
-                          msg.is_pinned_memory ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'hover:text-slate-700 dark:hover:text-slate-200'
-                        }`}
-                        title="Tandai sebagai Memori Jangka Panjang ('Ingat Ini')"
-                      >
-                        <Bookmark className="w-3 h-3" />
-                        <span>{msg.is_pinned_memory ? 'Tersimpan' : 'Ingat Ini'}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => setRewindTarget(msg.id)}
-                        className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 hidden md:inline-flex items-center gap-1 text-[11px] disabled:opacity-40 disabled:cursor-not-allowed"
-                        title="Mundur ke Pesan Ini (pesan ini dan sesudahnya dihapus)"
-                      >
-                        <Rewind className="w-3 h-3" />
-                        <span>Mundur</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setDeleteMsgTarget(msg.id)}
-                        className="p-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hidden md:inline-flex items-center gap-1 text-[11px]"
-                        title="Hapus Pesan"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-
-                      {/* Menu aksi untuk layar di bawah md. Handler yang dipanggil sama persis dengan tombol desktop */}
-                      <div ref={isMenuOpen ? actionMenuRef : undefined} className="relative md:hidden">
-                        <button
-                          type="button"
-                          onClick={(e) => toggleActionMenu(msg.id, e.currentTarget)}
-                          aria-haspopup="menu"
-                          aria-expanded={isMenuOpen}
-                          aria-controls={isMenuOpen ? `aksi-pesan-${msg.id}` : undefined}
-                          aria-label="Aksi lainnya untuk pesan ini"
-                          title="Aksi Lainnya"
-                          className={`w-7 h-7 rounded-lg inline-flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
-                            isMenuOpen
-                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
-                              : 'hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'
-                          }`}
-                        >
-                          <MoreHorizontal className="w-3.5 h-3.5" />
-                        </button>
-
-                        {isMenuOpen && (
-                          <div
-                            id={`aksi-pesan-${msg.id}`}
-                            role="menu"
-                            aria-label="Aksi pesan"
-                            className={`absolute right-0 z-30 w-40 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1729] shadow-lg p-1.5 ${
-                              actionMenu?.up ? 'bottom-full mb-1' : 'top-full mt-1'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => runMenuAction(() => handleCopyMessage(msg.id, msg.content))}
-                              className="w-full h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:bg-slate-100 dark:focus-visible:bg-slate-800 focus-visible:outline-none flex items-center gap-2"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                              <span>Salin</span>
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() =>
-                                runMenuAction(() => {
-                                  setEditingMsgId(msg.id);
-                                  setEditingContent(msg.content);
-                                })
-                              }
-                              className="w-full h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:bg-slate-100 dark:focus-visible:bg-slate-800 focus-visible:outline-none flex items-center gap-2"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                              <span>Edit</span>
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => runMenuAction(() => handlePinMessageToMemory(msg))}
-                              className={`w-full h-8 px-2.5 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:bg-slate-100 dark:focus-visible:bg-slate-800 focus-visible:outline-none flex items-center gap-2 ${
-                                msg.is_pinned_memory
-                                  ? 'text-indigo-600 dark:text-indigo-400 font-medium'
-                                  : 'text-slate-700 dark:text-slate-200'
-                              }`}
-                            >
-                              <Bookmark className="w-3.5 h-3.5" />
-                              <span>{msg.is_pinned_memory ? 'Tersimpan' : 'Ingat Ini'}</span>
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              disabled={isBusy}
-                              onClick={() => runMenuAction(() => setRewindTarget(msg.id))}
-                              className="w-full h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:bg-slate-100 dark:focus-visible:bg-slate-800 focus-visible:outline-none flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              <Rewind className="w-3.5 h-3.5" />
-                              <span>Mundur</span>
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => runMenuAction(() => setDeleteMsgTarget(msg.id))}
-                              className="w-full h-8 px-2.5 rounded-lg text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 focus-visible:bg-rose-50 dark:focus-visible:bg-rose-950/40 focus-visible:outline-none flex items-center gap-2"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Hapus</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Umpan balik salin tetap terlihat di mobile karena menu langsung tertutup */}
-                      {copiedMsgId === msg.id && (
-                        <span
-                          role="status"
-                          className="md:hidden inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400"
-                        >
-                          <Check className="w-3 h-3" />
-                          <span>Tersalin</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {!isChar && (
-                    <CharacterAvatar
-                      name={userPersona.display_name || 'Kamu'}
-                      avatar={userPersona.avatar}
-                      size="sm"
-                    />
-                  )}
-                </div>
-              );
-            })}
+            {messages.map((msg) => (
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                isLastCharacterMessage={msg.id === lastCharacterMsgId}
+                character={character}
+                userPersona={userPersona}
+                isEditing={editingMsgId === msg.id}
+                editingContent={editingContent}
+                isRegenerating={regeneratingId === msg.id}
+                isStreamingThis={streamingMsgId === msg.id}
+                isBusy={isBusy}
+                copied={copiedMsgId === msg.id}
+                isSpeaking={speakingMsgId === msg.id}
+                ttsSupported={ttsSupported}
+                isMenuOpen={actionMenu?.id === msg.id}
+                menuUp={Boolean(actionMenu?.up)}
+                actionMenuRef={actionMenuRef}
+                onChangeEditingContent={setEditingContent}
+                onStartEdit={(m) => {
+                  setEditingMsgId(m.id);
+                  setEditingContent(m.content);
+                }}
+                onCancelEdit={() => setEditingMsgId(null)}
+                onSaveEdit={handleSaveEditMessage}
+                onSwipeSelect={handleSwipeSelect}
+                onRegenerate={handleGenerateSwipeOrRegenerate}
+                onCopy={handleCopyMessage}
+                onPinMemory={handlePinMessageToMemory}
+                onRewind={setRewindTarget}
+                onFork={setForkTarget}
+                onDelete={setDeleteMsgTarget}
+                onToggleSpeak={handleToggleSpeak}
+                onToggleMenu={toggleActionMenu}
+                onRunMenuAction={runMenuAction}
+              />
+            ))}
 
             {sending && !streamingMsgId && (
               <div className="flex items-start gap-3">
@@ -1279,240 +964,45 @@ export default function ChatRoomPage() {
             <div ref={bottomRef} />
           </div>
 
-          {/* Input Kirim Pesan (Sticky & Fixed di Bagian Bawah) */}
-          <div className="p-2.5 sm:p-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-[#0c1220]/90 backdrop-blur-xs pb-[max(0.625rem,env(safe-area-inset-bottom))] shrink-0 z-20 transition-colors">
-            {/* Karakter sudah dihapus pemiliknya: percakapan jadi arsip yang hanya bisa dibaca */}
-            {characterDeleted && (
-              <div className="mb-2.5 p-3 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/30 text-[11px] leading-relaxed text-amber-900 dark:text-amber-200">
-                Karakter ini sudah dihapus oleh pembuatnya. Riwayat percakapan masih bisa kamu baca, tetapi pesan
-                baru tidak bisa dikirim lagi.
-              </div>
-            )}
-
-            <div className="flex items-center gap-2.5">
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                disabled={characterDeleted}
-                value={inputText}
-                onChange={(e) => {
-                  setInputText(e.target.value);
-                  e.target.style.height = 'auto';
-                  if (e.target.value.trim()) {
-                    e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
-                  } else {
-                    e.target.style.height = '';
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    const isMobileDevice =
-                      typeof window !== 'undefined' &&
-                      (window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 768);
-                    if (!isMobileDevice) {
-                      e.preventDefault();
-                      handleSendMessage();
-                    }
-                  }
-                }}
-                placeholder={
-                  characterDeleted ? 'Percakapan ini hanya bisa dibaca.' : `Kirim pesan ke ${character.name}...`
-                }
-                className="flex-1 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] px-4 py-3 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 dark:focus:border-indigo-400 resize-none h-[48px] min-h-[48px] max-h-36 leading-5 shadow-2xs disabled:bg-slate-100 dark:disabled:bg-slate-900 disabled:cursor-not-allowed"
-              />
-              {sending ? (
-                <button
-                  type="button"
-                  onClick={handleStopStreaming}
-                  className="h-[48px] w-[48px] rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
-                  title="Berhenti Berbicara"
-                  aria-label="Berhenti Berbicara"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={characterDeleted || (!inputText.trim() && messages.length === 0)}
-                  onClick={handleSendMessage}
-                  className="h-[48px] w-[48px] rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 dark:disabled:bg-slate-800 dark:disabled:text-slate-600 text-white text-xs font-semibold inline-flex items-center justify-center shrink-0 transition-colors shadow-2xs"
-                  title={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
-                  aria-label={!inputText.trim() ? 'Lanjut bicara' : 'Kirim'}
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </div>
+          <ChatInput
+            characterName={character.name}
+            characterDeleted={characterDeleted}
+            inputText={inputText}
+            sending={sending}
+            hasMessages={messages.length > 0}
+            textareaRef={textareaRef}
+            onChangeText={setInputText}
+            onSend={handleSendMessage}
+            onStop={handleStopStreaming}
+          />
         </div>
 
-        {/* Panel Samping: Pengaturan per Chat, Ringkasan Konteks, dan Pindah Ruang Chat */}
         {showDrawer && (
-          <>
-            <div
-              className="fixed inset-0 bg-slate-900/40 z-30 sm:hidden backdrop-blur-2xs"
-              onClick={() => setShowDrawer(false)}
-            />
-            <aside className="fixed inset-y-0 right-0 z-40 w-80 max-w-[85vw] sm:static sm:z-auto sm:w-80 bg-white dark:bg-[#0c1220] sm:rounded-2xl border-l sm:border border-slate-200 dark:border-slate-800 p-4 space-y-5 overflow-y-auto shrink-0 shadow-xl sm:shadow-2xs transition-colors">
-              <div className="flex items-center justify-between sm:hidden pb-2 border-b border-slate-100 dark:border-slate-800">
-                <span className="text-xs font-bold text-slate-900 dark:text-white">Pengaturan Chat</span>
-                <button
-                  type="button"
-                  onClick={() => setShowDrawer(false)}
-                  className="p-1 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <form onSubmit={handleSaveChatSettings} className="space-y-3.5">
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Pengaturan Percakapan Ini</h3>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Judul Ruang Chat
-                </label>
-                <input
-                  type="text"
-                  value={chatTitleInput}
-                  onChange={(e) => setChatTitleInput(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
-                />
-              </div>
-
-              {personas.length > 0 && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Persona Kamu di Chat Ini
-                  </label>
-                  <select
-                    value={userPersona.id || ''}
-                    onChange={(e) => handleSwitchChatPersona(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-[#111827]"
-                  >
-                    {personas.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.display_name} {p.is_default ? '(Utama)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Gaya Panjang Balasan
-                </label>
-                <select
-                  value={replyStyleInput}
-                  onChange={(e) => setReplyStyleInput(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-[#111827]"
-                >
-                  <option value="pendek">Pendek (1-2 paragraf ringkas)</option>
-                  <option value="sedang">Sedang (Seimbang & natural)</option>
-                  <option value="panjang">Panjang (Deskriptif & mendalam)</option>
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Temperature ({tempInput})
-                  </label>
-                  <input
-                    type="number"
-                    step="0.05"
-                    min="0.1"
-                    max="1.5"
-                    value={tempInput}
-                    onChange={(e) => setTempInput(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Max Tokens
-                  </label>
-                  <input
-                    type="number"
-                    step="64"
-                    min="128"
-                    max="4096"
-                    value={maxTokensInput}
-                    onChange={(e) => setMaxTokensInput(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Ringkasan Konteks Cerita
-                  </label>
-                  <button
-                    type="button"
-                    disabled={summarizing}
-                    onClick={handleSummarizeNow}
-                    className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
-                  >
-                    {summarizing ? 'Meringkas...' : 'Buat Ringkasan AI'}
-                  </button>
-                </div>
-                <textarea
-                  rows={3}
-                  value={chat.summary || ''}
-                  onChange={(e) => setChat((p: any) => ({ ...p, summary: e.target.value }))}
-                  placeholder="Ringkasan percakapan sejauh ini (otomatis dibuat saat chat panjang atau klik Buat Ringkasan AI)..."
-                  className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-2 text-xs text-slate-800 dark:text-slate-200"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={savingSettings}
-                className="w-full h-8 rounded-lg bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-xs font-semibold transition-colors"
-              >
-                {savingSettings ? 'Menyimpan...' : 'Simpan Pengaturan Chat'}
-              </button>
-            </form>
-
-            {/* Daftar Ruang Chat Lain untuk Karakter yang Sama */}
-            {otherChats.length > 1 && (
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
-                <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                  Alur Cerita Lain ({otherChats.length})
-                </h4>
-                <div className="space-y-1.5">
-                  {otherChats.map((oc) => (
-                    <Link
-                      key={oc.id}
-                      href={`/chat/${oc.id}`}
-                      className={`block px-2.5 py-2 rounded-lg text-xs truncate ${
-                        oc.id === chatId
-                          ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-semibold'
-                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
-                      }`}
-                    >
-                      {oc.title}
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setDeleteChatModal(true)}
-                className="w-full h-8 rounded-lg border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-medium inline-flex items-center justify-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Hapus Ruang Chat Ini</span>
-              </button>
-            </div>
-          </aside>
-        </>
-      )}
+          <ChatSettingsDrawer
+            chatId={chatId}
+            chatSummary={chat.summary || ''}
+            chatTitleInput={chatTitleInput}
+            tempInput={tempInput}
+            maxTokensInput={maxTokensInput}
+            replyStyleInput={replyStyleInput}
+            personas={personas}
+            userPersona={userPersona}
+            otherChats={otherChats}
+            summarizing={summarizing}
+            savingSettings={savingSettings}
+            messageCount={messages.length}
+            onClose={() => setShowDrawer(false)}
+            onChangeTitle={setChatTitleInput}
+            onChangeTemp={setTempInput}
+            onChangeMaxTokens={setMaxTokensInput}
+            onChangeReplyStyle={setReplyStyleInput}
+            onChangeSummary={(val) => setChat((p: any) => ({ ...p, summary: val }))}
+            onSwitchPersona={handleSwitchChatPersona}
+            onSummarize={handleSummarizeNow}
+            onSaveSettings={handleSaveChatSettings}
+            onRequestDeleteChat={() => setDeleteChatModal(true)}
+          />
+        )}
       </div>
 
       <ConfirmModal
@@ -1524,15 +1014,24 @@ export default function ChatRoomPage() {
         onCancel={() => setDeleteChatModal(false)}
       />
 
-      {/* Hapus sengaja hanya membuang satu pesan. Ingatan dan ringkasan tidak
-          disentuh, jadi dibedakan dari Mundur lewat keterangan di dialog. */}
       <ConfirmModal
         open={Boolean(deleteMsgTarget)}
         title="Hapus Pesan Ini?"
-        description="Pesan yang dipilih akan dihapus dari riwayat percakapan. Ingatan dan ringkasan yang berasal dari pesan ini tidak ikut dihapus, jadi karakter masih bisa mengingatnya. Pakai Mundur bila kamu ingin membuang bagian cerita ini sekaligus ingatannya."
+        description="Pesan yang dipilih akan dihapus dari riwayat percakapan. Ingatan dan ringkasan yang berasal dari pesan ini tidak ikut dihapus. Pakai Mundur bila kamu ingin membuang bagian cerita ini sekaligus ingatannya."
         confirmLabel="Hapus Pesan"
         onConfirm={handleConfirmDeleteMessage}
         onCancel={() => setDeleteMsgTarget(null)}
+      />
+
+      <ConfirmModal
+        open={Boolean(forkTarget)}
+        loading={forking}
+        title="Cabangkan Cerita dari Pesan Ini?"
+        description="Salinan percakapan baru akan dibuat mulai dari awal hingga pesan ini. Percakapan aslimu tidak akan berubah sehingga kamu bebas mencoba alur cerita alternatif."
+        confirmLabel="Buat Cabang Baru"
+        danger={false}
+        onConfirm={handleConfirmFork}
+        onCancel={() => setForkTarget(null)}
       />
 
       <ConfirmModal

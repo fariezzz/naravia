@@ -1,8 +1,9 @@
 import { buildCharacterSystemPrompt } from './character';
-import { CharacterRow, ChatRow, execute, MemoryRow, MessageRow, query, queryOne } from './db';
+import { CharacterRow, ChatRow, execute, MessageRow, queryOne } from './db';
 import { newId } from './ids';
 import { generateLLMResponse, LLMMessage } from './llm';
 import { getRelevantLore } from './lore';
+import { getRelevantMemories, saveMemoryEmbedding } from './memories';
 import { getUserSettings, resolveChatPersona } from './store';
 
 // Menyusun system prompt + riwayat pesan untuk satu giliran karakter (dipakai jalur stream dan non-stream)
@@ -23,15 +24,19 @@ export async function buildTurnContext(params: {
   const slicedHistory = historyMessages.slice(-historyLimit);
 
   const recentText = slicedHistory.map((m) => m.content).join('\n');
-  const [lore, persona, memories] = await Promise.all([
-    getRelevantLore(userId, character.world_id, recentText),
+  const [lore, persona, memoryResult] = await Promise.all([
+    getRelevantLore(userId, character.world_id, recentText, {
+      allowPublicWorld: character.visibility === 'public',
+    }),
     resolveChatPersona(userId, chat),
-    query<MemoryRow>(
-      `SELECT * FROM memories WHERE user_id = $2 AND (character_id = $1 OR character_id IS NULL)
-       ORDER BY created_at DESC LIMIT 25`,
-      [character.id, userId]
-    ),
+    getRelevantMemories({
+      userId,
+      characterId: character.id,
+      recentText,
+      limit: 25,
+    }),
   ]);
+  const memories = memoryResult.memories;
 
   let systemPrompt = buildCharacterSystemPrompt({
     character,
@@ -82,7 +87,14 @@ export async function buildTurnContext(params: {
   const temperature = isAlternativeVariation ? Math.min(1.15, baseTemp + 0.08) : baseTemp;
   const maxTokens = chat.max_tokens ?? (parseInt(settings.max_tokens || '1024', 10) || 1024);
 
-  return { llmMessages, temperature, maxTokens, matchedLore: lore.matchedEntries };
+  return {
+    llmMessages,
+    temperature,
+    maxTokens,
+    matchedLore: lore.matchedEntries,
+    selectedMemories: memories,
+    memoryRetrievalMode: memoryResult.mode,
+  };
 }
 
 export function isDefaultChatTitle(title: string | null | undefined): boolean {
@@ -217,11 +229,12 @@ export async function runBackgroundMemoryTasks(
               [userId, character.id, content]
             );
             if (dup) continue;
+            const memId = newId('mem');
             await execute(
               `INSERT INTO memories (id, user_id, character_id, type, content, source_chat_id, source_message_id, is_auto)
                VALUES ($1, $2, $3, $4, $5, $6, $7, 1)`,
               [
-                newId('mem'),
+                memId,
                 userId,
                 character.id,
                 f?.type === 'preference' ? 'preference' : 'fact',
@@ -230,6 +243,7 @@ export async function runBackgroundMemoryTasks(
                 recentWindow[recentWindow.length - 1]?.id || null,
               ]
             );
+            saveMemoryEmbedding(memId, content).catch(() => undefined);
           }
         }
       }

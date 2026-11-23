@@ -31,8 +31,8 @@ ENV HOSTNAME="0.0.0.0"
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Folder unggahan avatar (persisten lewat volume) dan folder data SQLite lama (untuk migrasi)
-RUN mkdir -p /app/data /app/public/uploads && \
+# Folder unggahan avatar (di luar public/ agar wajib lewat otorisasi route) dan folder data SQLite lama
+RUN mkdir -p /app/data/uploads /app/public/uploads && \
     chown -R nextjs:nodejs /app/data /app/public/uploads
 
 # Salin aset statis dan output standalone
@@ -50,6 +50,6 @@ USER nextjs
 
 EXPOSE 3002
 
-VOLUME ["/app/public/uploads"]
+VOLUME ["/app/data/uploads"]
 
 CMD ["node", "server.js"]

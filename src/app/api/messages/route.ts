@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
       return jsonError('Belum ada riwayat percakapan. Tuliskan pesan awal untuk memulai percakapan.', 400);
     }
 
-    let turn;
+    let turn: Awaited<ReturnType<typeof generateCharacterText>>;
     try {
       turn = await generateCharacterText(user.id, chat, character, allMessages, { isContinuation: isContinue });
     } catch (llmErr) {

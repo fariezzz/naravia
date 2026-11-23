@@ -63,6 +63,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="id" className={`h-full ${sans.variable} ${display.variable}`} suppressHydrationWarning>
       <head>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static inline theme hydration script */}
         <script
           dangerouslySetInnerHTML={{
             __html: `

@@ -1,11 +1,24 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { execute, queryOne } from './db';
+import { execute, query, queryOne } from './db';
 import { getClientIp, HttpError } from './http';
 
 export const SESSION_COOKIE = 'naravia_session';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const LAST_SEEN_THROTTLE_MS = 5 * 60 * 1000;
+const CLEANUP_THROTTLE_MS = 30 * 60 * 1000;
+
+let lastSessionCleanupAt = 0;
+
+export interface SessionInfo {
+  id: string;
+  user_agent: string;
+  ip: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  is_current: boolean;
+}
 
 export interface SessionUser {
   id: string;
@@ -21,10 +34,17 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function useSecureCookie(): boolean {
+function isSecureCookieEnabled(): boolean {
   if (process.env.COOKIE_SECURE === 'false') return false;
   if (process.env.COOKIE_SECURE === 'true') return true;
   return process.env.NODE_ENV === 'production';
+}
+
+export async function cleanupExpiredSessions(force = false): Promise<number> {
+  const now = Date.now();
+  if (!force && now - lastSessionCleanupAt < CLEANUP_THROTTLE_MS) return 0;
+  lastSessionCleanupAt = now;
+  return execute('DELETE FROM sessions WHERE expires_at <= now()').catch(() => 0);
 }
 
 export async function createSession(userId: string, req: NextRequest) {
@@ -34,13 +54,15 @@ export async function createSession(userId: string, req: NextRequest) {
     `INSERT INTO sessions (id, user_id, user_agent, ip, expires_at) VALUES ($1, $2, $3, $4, $5)`,
     [hashToken(token), userId, (req.headers.get('user-agent') || '').slice(0, 300), getClientIp(req), expiresAt.toISOString()]
   );
+  // Bersihkan sesi kedaluwarsa secara berkala tanpa menghambat respons login
+  cleanupExpiredSessions().catch(() => undefined);
   return { token, expiresAt };
 }
 
 export function setSessionCookie(res: NextResponse, token: string, expiresAt: Date) {
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: useSecureCookie(),
+    secure: isSecureCookieEnabled(),
     sameSite: 'lax',
     path: '/',
     expires: expiresAt,
@@ -50,7 +72,7 @@ export function setSessionCookie(res: NextResponse, token: string, expiresAt: Da
 export function clearSessionCookie(res: NextResponse) {
   res.cookies.set(SESSION_COOKIE, '', {
     httpOnly: true,
-    secure: useSecureCookie(),
+    secure: isSecureCookieEnabled(),
     sameSite: 'lax',
     path: '/',
     maxAge: 0,
@@ -110,6 +132,31 @@ export async function requireAdmin(req: NextRequest): Promise<SessionUser> {
 
 export async function destroySession(sessionId: string) {
   await execute('DELETE FROM sessions WHERE id = $1', [sessionId]);
+}
+
+export async function listUserSessions(userId: string, currentSessionId: string): Promise<SessionInfo[]> {
+  const rows = await query<{
+    id: string;
+    user_agent: string;
+    ip: string;
+    created_at: string;
+    last_seen_at: string;
+    expires_at: string;
+  }>(
+    `SELECT id, user_agent, ip, created_at, last_seen_at, expires_at
+     FROM sessions
+     WHERE user_id = $1 AND expires_at > now()
+     ORDER BY last_seen_at DESC, created_at DESC`,
+    [userId]
+  );
+  return rows.map((r) => ({
+    ...r,
+    is_current: r.id === currentSessionId,
+  }));
+}
+
+export async function revokeSessionById(userId: string, sessionId: string): Promise<number> {
+  return execute('DELETE FROM sessions WHERE user_id = $1 AND id = $2', [userId, sessionId]);
 }
 
 export async function revokeUserSessions(userId: string, exceptSessionId?: string) {

@@ -1,13 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertAvatarOwnership } from '@/lib/assets';
 import { requireUser } from '@/lib/auth';
-import { query } from '@/lib/db';
+import { query, withTransaction } from '@/lib/db';
 import { stripOwner } from '@/lib/format';
-import { getClientIp, handleApiError } from '@/lib/http';
+import { getClientIp, handleApiError, jsonError, readJson } from '@/lib/http';
+import { newId } from '@/lib/ids';
+import { sanitizeMemoryForClient } from '@/lib/memories';
 import { enforceRateLimit } from '@/lib/rateLimit';
 import { logAudit } from '@/lib/store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const MAX_RESTORE_ITEMS = 5000;
+
+function ensureJsonText(val: unknown, fallback = '[]'): string {
+  if (typeof val === 'string') return val;
+  if (val === undefined || val === null) return fallback;
+  try {
+    return JSON.stringify(val);
+  } catch {
+    return fallback;
+  }
+}
 
 // Unduh salinan seluruh data milik akun ini dalam format JSON (pengganti cadangan file database)
 export async function GET(req: NextRequest) {
@@ -53,7 +68,7 @@ export async function GET(req: NextRequest) {
       personas: personas.map(stripOwner),
       chats: chats.map(stripOwner),
       messages,
-      memories: memories.map(stripOwner),
+      memories: memories.map(sanitizeMemoryForClient),
       group_chats: groupChats.map(stripOwner),
       group_chat_members: groupMembers,
       group_messages: groupMessages,
@@ -72,5 +87,308 @@ export async function GET(req: NextRequest) {
     });
   } catch (err) {
     return handleApiError(err, 'Gagal mengekspor data.');
+  }
+}
+
+/**
+ * Memulihkan (restore/import) file cadangan `naravia-export` JSON ke akun pengguna saat ini.
+ * Seluruh ID dibuat ulang dengan pemetaan relasi penuh agar aman terhadap bentrok ID
+ * dan tidak pernah menimpa data milik akun lain.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const user = await requireUser(req);
+    enforceRateLimit(`restore:${user.id}`, 5, 60 * 60_000);
+
+    const body = await readJson(req);
+    if (!body || body.format !== 'naravia-export') {
+      return jsonError('Format berkas tidak dikenali. Pilih berkas JSON hasil Ekspor Data Naravia.', 400);
+    }
+
+    const worldsIn = Array.isArray(body.worlds) ? body.worlds.slice(0, 200) : [];
+    const loreIn = Array.isArray(body.lore_entries) ? body.lore_entries.slice(0, 2000) : [];
+    const personasIn = Array.isArray(body.personas) ? body.personas.slice(0, 100) : [];
+    const charactersIn = Array.isArray(body.characters) ? body.characters.slice(0, 500) : [];
+    const chatsIn = Array.isArray(body.chats) ? body.chats.slice(0, 1000) : [];
+    const messagesIn = Array.isArray(body.messages) ? body.messages.slice(0, MAX_RESTORE_ITEMS) : [];
+    const memoriesIn = Array.isArray(body.memories) ? body.memories.slice(0, 2000) : [];
+    const groupChatsIn = Array.isArray(body.group_chats) ? body.group_chats.slice(0, 200) : [];
+    const groupMembersIn = Array.isArray(body.group_chat_members) ? body.group_chat_members.slice(0, 2000) : [];
+    const groupMessagesIn = Array.isArray(body.group_messages) ? body.group_messages.slice(0, MAX_RESTORE_ITEMS) : [];
+
+    // Validasi avatar sebelum masuk transaksi
+    const safeCharAvatars = new Map<number, string>();
+    for (let i = 0; i < charactersIn.length; i++) {
+      safeCharAvatars.set(i, await assertAvatarOwnership(charactersIn[i]?.avatar, user.id));
+    }
+    const safePersonaAvatars = new Map<number, string>();
+    for (let i = 0; i < personasIn.length; i++) {
+      safePersonaAvatars.set(i, await assertAvatarOwnership(personasIn[i]?.avatar, user.id));
+    }
+
+    const restored = await withTransaction(async (client) => {
+      const worldMap = new Map<string, string>();
+      const personaMap = new Map<string, string>();
+      const charMap = new Map<string, string>();
+      const chatMap = new Map<string, string>();
+      const msgMap = new Map<string, string>();
+      const groupMap = new Map<string, string>();
+
+      const counts = {
+        worlds: 0,
+        lore_entries: 0,
+        personas: 0,
+        characters: 0,
+        chats: 0,
+        messages: 0,
+        memories: 0,
+        group_chats: 0,
+        group_messages: 0,
+      };
+
+      for (const w of worldsIn) {
+        if (!w?.name) continue;
+        const nid = newId('wld');
+        if (w.id) worldMap.set(String(w.id), nid);
+        await client.query(
+          `INSERT INTO worlds (id, user_id, name, description, rules, places, factions, timeline)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            nid,
+            user.id,
+            String(w.name).slice(0, 120),
+            String(w.description || ''),
+            String(w.rules || ''),
+            ensureJsonText(w.places, '[]'),
+            ensureJsonText(w.factions, '[]'),
+            ensureJsonText(w.timeline, '[]'),
+          ]
+        );
+        counts.worlds++;
+      }
+
+      for (const l of loreIn) {
+        const mappedWorld = l?.world_id ? worldMap.get(String(l.world_id)) : null;
+        if (!mappedWorld || !l?.content) continue;
+        await client.query(
+          `INSERT INTO lore_entries (id, world_id, title, keywords, content, enabled)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            newId('lore'),
+            mappedWorld,
+            String(l.title || '').slice(0, 160),
+            ensureJsonText(l.keywords, '[]'),
+            String(l.content),
+            l.enabled === 0 || l.enabled === false ? 0 : 1,
+          ]
+        );
+        counts.lore_entries++;
+      }
+
+      for (let i = 0; i < personasIn.length; i++) {
+        const p = personasIn[i];
+        if (!p?.display_name) continue;
+        const nid = newId('per');
+        if (p.id) personaMap.set(String(p.id), nid);
+        await client.query(
+          `INSERT INTO user_personas (id, user_id, display_name, avatar, description, likes, dislikes, is_default)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 0)`,
+          [
+            nid,
+            user.id,
+            String(p.display_name).slice(0, 80),
+            safePersonaAvatars.get(i) || '',
+            String(p.description || ''),
+            String(p.likes || ''),
+            String(p.dislikes || ''),
+          ]
+        );
+        counts.personas++;
+      }
+
+      for (let i = 0; i < charactersIn.length; i++) {
+        const c = charactersIn[i];
+        if (!c?.name) continue;
+        const nid = newId('char');
+        if (c.id) charMap.set(String(c.id), nid);
+        const mappedWorld = c.world_id ? worldMap.get(String(c.world_id)) || null : null;
+        await client.query(
+          `INSERT INTO characters (
+             id, user_id, name, tagline, avatar, description, personality, speaking_style,
+             scenario, greeting, example_dialogues, tags, research_notes, world_id,
+             is_pinned, is_favorite, temperature_override, visibility
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'private')`,
+          [
+            nid,
+            user.id,
+            String(c.name).slice(0, 120),
+            String(c.tagline || ''),
+            safeCharAvatars.get(i) || '',
+            String(c.description || ''),
+            String(c.personality || ''),
+            String(c.speaking_style || ''),
+            String(c.scenario || ''),
+            ensureJsonText(c.greeting, '[]'),
+            ensureJsonText(c.example_dialogues, '[]'),
+            ensureJsonText(c.tags, '[]'),
+            typeof c.research_notes === 'string' ? c.research_notes : ensureJsonText(c.research_notes, ''),
+            mappedWorld,
+            c.is_pinned ? 1 : 0,
+            c.is_favorite ? 1 : 0,
+            c.temperature_override !== undefined && c.temperature_override !== null
+              ? Number(c.temperature_override)
+              : null,
+          ]
+        );
+        counts.characters++;
+      }
+
+      for (const ch of chatsIn) {
+        const mappedChar = ch?.character_id ? charMap.get(String(ch.character_id)) || null : null;
+        if (!mappedChar && !ch?.character_snapshot) continue;
+        const nid = newId('chat');
+        if (ch.id) chatMap.set(String(ch.id), nid);
+        const mappedPersona = ch.persona_id ? personaMap.get(String(ch.persona_id)) || null : null;
+        await client.query(
+          `INSERT INTO chats (
+             id, user_id, character_id, character_snapshot, title, summary,
+             temperature, max_tokens, reply_style, persona_id, persona_snapshot, use_latest_persona
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [
+            nid,
+            user.id,
+            mappedChar,
+            ch.character_snapshot ? String(ch.character_snapshot) : null,
+            String(ch.title || 'Percakapan Dipulihkan').slice(0, 120),
+            String(ch.summary || ''),
+            ch.temperature !== undefined && ch.temperature !== null ? Number(ch.temperature) : null,
+            ch.max_tokens !== undefined && ch.max_tokens !== null ? Number(ch.max_tokens) : null,
+            String(ch.reply_style || 'sedang'),
+            mappedPersona,
+            ch.persona_snapshot ? String(ch.persona_snapshot) : null,
+            ch.use_latest_persona === 0 || ch.use_latest_persona === false ? 0 : 1,
+          ]
+        );
+        counts.chats++;
+      }
+
+      for (const m of messagesIn) {
+        const mappedChat = m?.chat_id ? chatMap.get(String(m.chat_id)) : null;
+        if (!mappedChat || !m?.content) continue;
+        const nid = newId('msg');
+        if (m.id) msgMap.set(String(m.id), nid);
+        const createdAt = m.created_at && !Number.isNaN(Date.parse(String(m.created_at)))
+          ? new Date(String(m.created_at)).toISOString()
+          : new Date().toISOString();
+        await client.query(
+          `INSERT INTO messages (id, chat_id, role, content, alternatives, active_alt_index, is_pinned_memory, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            nid,
+            mappedChat,
+            m.role === 'user' ? 'user' : 'character',
+            String(m.content),
+            ensureJsonText(m.alternatives, JSON.stringify([String(m.content)])),
+            Math.max(0, Number(m.active_alt_index || 0)),
+            m.is_pinned_memory ? 1 : 0,
+            createdAt,
+          ]
+        );
+        counts.messages++;
+      }
+
+      for (const mem of memoriesIn) {
+        if (!mem?.content) continue;
+        const mappedChar = mem.character_id ? charMap.get(String(mem.character_id)) || null : null;
+        const mappedChat = mem.source_chat_id ? chatMap.get(String(mem.source_chat_id)) || null : null;
+        const mappedMsg = mem.source_message_id ? msgMap.get(String(mem.source_message_id)) || null : null;
+        await client.query(
+          `INSERT INTO memories (id, user_id, character_id, type, content, source_chat_id, source_message_id, is_auto)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            newId('mem'),
+            user.id,
+            mappedChar,
+            mem.type === 'preference' ? 'preference' : mem.type === 'event' ? 'event' : 'fact',
+            String(mem.content),
+            mappedChat,
+            mappedMsg,
+            mem.is_auto ? 1 : 0,
+          ]
+        );
+        counts.memories++;
+      }
+
+      for (const g of groupChatsIn) {
+        if (!g?.title) continue;
+        const nid = newId('grp');
+        if (g.id) groupMap.set(String(g.id), nid);
+        const mappedPersona = g.persona_id ? personaMap.get(String(g.persona_id)) || null : null;
+        await client.query(
+          `INSERT INTO group_chats (id, user_id, title, scenario, turn_mode, persona_id, temperature, max_tokens)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            nid,
+            user.id,
+            String(g.title).slice(0, 120),
+            String(g.scenario || ''),
+            String(g.turn_mode || 'auto'),
+            mappedPersona,
+            Number(g.temperature || 0.9),
+            Number(g.max_tokens || 1024),
+          ]
+        );
+        counts.group_chats++;
+      }
+
+      for (const gm of groupMembersIn) {
+        const mappedGroup = gm?.group_chat_id ? groupMap.get(String(gm.group_chat_id)) : null;
+        const mappedChar = gm?.character_id ? charMap.get(String(gm.character_id)) : null;
+        if (!mappedGroup || !mappedChar) continue;
+        await client.query(
+          `INSERT INTO group_chat_members (group_chat_id, character_id, join_order)
+           VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+          [mappedGroup, mappedChar, Number(gm.join_order || 0)]
+        );
+      }
+
+      for (const msg of groupMessagesIn) {
+        const mappedGroup = msg?.group_chat_id ? groupMap.get(String(msg.group_chat_id)) : null;
+        if (!mappedGroup || !msg?.content) continue;
+        const mappedChar = msg.character_id ? charMap.get(String(msg.character_id)) || null : null;
+        const createdAt = msg.created_at && !Number.isNaN(Date.parse(String(msg.created_at)))
+          ? new Date(String(msg.created_at)).toISOString()
+          : new Date().toISOString();
+        await client.query(
+          `INSERT INTO group_messages (id, group_chat_id, role, character_id, content, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            newId('gmsg'),
+            mappedGroup,
+            msg.role === 'user' ? 'user' : 'character',
+            mappedChar,
+            String(msg.content),
+            createdAt,
+          ]
+        );
+        counts.group_messages++;
+      }
+
+      return counts;
+    });
+
+    await logAudit({
+      userId: user.id,
+      actorEmail: user.email,
+      action: 'pulihkan_cadangan_data',
+      detail: `karakter=${restored.characters}, chat=${restored.chats}, pesan=${restored.messages}`,
+      ip: getClientIp(req),
+    });
+
+    return NextResponse.json({ success: true, restored }, { status: 201 });
+  } catch (err) {
+    return handleApiError(err, 'Gagal memulihkan cadangan data.');
   }
 }

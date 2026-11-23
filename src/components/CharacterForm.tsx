@@ -1,23 +1,24 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Sparkles,
-  Upload,
-  Plus,
-  Trash2,
-  Send,
   AlertCircle,
   CheckCircle2,
-  Palette,
   Image as ImageIcon,
+  Palette,
+  Plus,
   Save,
+  Sparkles,
+  Trash2,
+  Upload,
 } from 'lucide-react';
 import CharacterAvatar from './CharacterAvatar';
 import ImageCropModal from './ImageCropModal';
-import FormattedMessage from './FormattedMessage';
-import ResearchSourceList from './ResearchSourceList';
+import CharacterPreviewSidebar from './character-form/CharacterPreviewSidebar';
+import ImportCardPanel from './character-form/ImportCardPanel';
+import ResearchNotesPanel from './character-form/ResearchNotesPanel';
+import ResearchWizardPanel from './character-form/ResearchWizardPanel';
 
 export interface CharacterFormValues {
   id?: string;
@@ -33,6 +34,7 @@ export interface CharacterFormValues {
   tags: string[];
   world_id: string | null;
   visibility: 'private' | 'public';
+  allow_remix: boolean;
   temperature_override: string;
   research_notes: {
     mode: string;
@@ -54,23 +56,15 @@ export default function CharacterForm({
   isEdit = false,
 }: CharacterFormProps) {
   const router = useRouter();
-  const [activeMode, setActiveMode] = useState<'auto' | 'manual' | 'import'>(
-    isEdit ? 'manual' : initialTab
-  );
+  const [activeMode, setActiveMode] = useState<'auto' | 'manual' | 'import'>(isEdit ? 'manual' : initialTab);
 
-  // State Pembuatan Otomatis (Bagian 11)
   const [ideaInput, setIdeaInput] = useState('');
   const [charTypeHint, setCharTypeHint] = useState<'auto' | 'existing' | 'original'>('auto');
   const [manualResearchText, setManualResearchText] = useState('');
   const [generating, setGenerating] = useState(false);
-
-  // State Impor Kartu SillyTavern
   const [importing, setImporting] = useState(false);
-
-  // State Daftar Dunia
   const [worlds, setWorlds] = useState<Array<{ id: string; name: string }>>([]);
 
-  // State Form Utama Karakter
   const [form, setForm] = useState<CharacterFormValues>({
     name: initialValues?.name || '',
     tagline: initialValues?.tagline || '',
@@ -79,18 +73,15 @@ export default function CharacterForm({
     personality: initialValues?.personality || '',
     speaking_style: initialValues?.speaking_style || '',
     scenario: initialValues?.scenario || '',
-    greeting:
-      initialValues?.greeting && initialValues.greeting.length > 0
-        ? initialValues.greeting
-        : [''],
+    greeting: initialValues?.greeting && initialValues.greeting.length > 0 ? initialValues.greeting : [''],
     example_dialogues:
       initialValues?.example_dialogues && initialValues.example_dialogues.length > 0
         ? initialValues.example_dialogues
         : [{ user: '', char: '' }],
     tags: initialValues?.tags || [],
     world_id: initialValues?.world_id || null,
-    // Karakter baru selalu privat sampai pemiliknya memilih menerbitkannya
     visibility: initialValues?.visibility === 'public' ? 'public' : 'private',
+    allow_remix: Boolean(initialValues?.allow_remix),
     temperature_override:
       initialValues?.temperature_override !== undefined && initialValues?.temperature_override !== null
         ? String(initialValues.temperature_override)
@@ -109,17 +100,13 @@ export default function CharacterForm({
   const [notice, setNotice] = useState('');
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
 
-  // State Pratinjau Chat sebelum simpan (Bagian 8.5)
   const [previewMessages, setPreviewMessages] = useState<Array<{ role: 'user' | 'character'; content: string }>>([]);
   const [previewInput, setPreviewInput] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  // State Revisi Riset Berbasis Verifikasi Fakta
   const [revisionInput, setRevisionInput] = useState('');
   const [revising, setRevising] = useState(false);
   const [verificationResult, setVerificationResult] = useState<{ valid: boolean; explanation: string } | null>(null);
-
-  // State Pembersihan Kalimat Meta AI pada Kolom Personalisasi
   const [sanitizing, setSanitizing] = useState(false);
 
   useEffect(() => {
@@ -169,20 +156,11 @@ export default function CharacterForm({
             ? draft.example_dialogues
             : [{ user: '', char: '' }],
         tags: Array.isArray(draft.tags) ? draft.tags : [],
-        research_notes: draft.research_notes || {
-          mode: 'original',
-          summary: '',
-          sources: [],
-          uncertainFields: [],
-        },
+        research_notes: draft.research_notes || { mode: 'original', summary: '', sources: [], uncertainFields: [] },
       }));
       setTagInput(Array.isArray(draft.tags) ? draft.tags.join(', ') : '');
-      setPreviewMessages(
-        draft.greeting?.[0] ? [{ role: 'character', content: draft.greeting[0] }] : []
-      );
-      setNotice(
-        'Draf karakter selesai dibuat oleh AI. Silakan tinjau dan sunting isinya di bawah sebelum menyimpan.'
-      );
+      setPreviewMessages(draft.greeting?.[0] ? [{ role: 'character', content: draft.greeting[0] }] : []);
+      setNotice('Draf karakter selesai dibuat oleh AI. Silakan tinjau dan sunting isinya di bawah sebelum menyimpan.');
       setActiveMode('manual');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal membuat karakter otomatis.');
@@ -194,17 +172,13 @@ export default function CharacterForm({
   const handleImportCardFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setImporting(true);
     setError('');
     setNotice('');
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/import', {
-        method: 'POST',
-        body: fd,
-      });
+      const res = await fetch('/api/import', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal mengimpor kartu karakter.');
 
@@ -288,36 +262,32 @@ export default function CharacterForm({
     setNotice('');
     setVerificationResult(null);
     try {
-      const currentDraftPayload = {
-        name: form.name,
-        tagline: form.tagline,
-        description: form.description,
-        personality: form.personality,
-        speaking_style: form.speaking_style,
-        scenario: form.scenario,
-        greeting: form.greeting,
-        example_dialogues: form.example_dialogues,
-        tags: form.tags,
-        research_notes: form.research_notes,
-      };
-
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mode: 'revise',
-          currentDraft: currentDraftPayload,
+          currentDraft: {
+            name: form.name,
+            tagline: form.tagline,
+            description: form.description,
+            personality: form.personality,
+            speaking_style: form.speaking_style,
+            scenario: form.scenario,
+            greeting: form.greeting,
+            example_dialogues: form.example_dialogues,
+            tags: form.tags,
+            research_notes: form.research_notes,
+          },
           revisionRequest: revisionInput.trim(),
           characterTypeHint: charTypeHint,
         }),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal memproses revisi riset.');
 
       const revisedDraft = data.draft;
-      const verification = data.verification;
-      setVerificationResult(verification);
+      setVerificationResult(data.verification);
 
       setForm((prev) => ({
         ...prev,
@@ -328,17 +298,17 @@ export default function CharacterForm({
         speaking_style: revisedDraft.speaking_style || prev.speaking_style,
         scenario: revisedDraft.scenario || prev.scenario,
         greeting: Array.isArray(revisedDraft.greeting) && revisedDraft.greeting.length > 0 ? revisedDraft.greeting : prev.greeting,
-        example_dialogues: Array.isArray(revisedDraft.example_dialogues) && revisedDraft.example_dialogues.length > 0 ? revisedDraft.example_dialogues : prev.example_dialogues,
+        example_dialogues:
+          Array.isArray(revisedDraft.example_dialogues) && revisedDraft.example_dialogues.length > 0
+            ? revisedDraft.example_dialogues
+            : prev.example_dialogues,
         tags: Array.isArray(revisedDraft.tags) ? revisedDraft.tags : prev.tags,
         research_notes: revisedDraft.research_notes || prev.research_notes,
       }));
-
       setTagInput(Array.isArray(revisedDraft.tags) ? revisedDraft.tags.join(', ') : '');
-      if (revisedDraft.greeting?.[0]) {
-        setPreviewMessages([{ role: 'character', content: revisedDraft.greeting[0] }]);
-      }
+      if (revisedDraft.greeting?.[0]) setPreviewMessages([{ role: 'character', content: revisedDraft.greeting[0] }]);
 
-      if (verification?.valid) {
+      if (data.verification?.valid) {
         setNotice('Revisi riset diverifikasi sesuai fakta dan draf karakter berhasil diperbarui!');
         setRevisionInput('');
       } else {
@@ -357,9 +327,7 @@ export default function CharacterForm({
     setError('');
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setCropImageSrc(reader.result);
-      }
+      if (typeof reader.result === 'string') setCropImageSrc(reader.result);
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -371,9 +339,7 @@ export default function CharacterForm({
       const ext = blob.type === 'image/webp' ? '.webp' : '.png';
       const fd = new FormData();
       fd.append('file', new File([blob], `avatar-${Date.now()}${ext}`, { type: blob.type || 'image/webp' }));
-      if (form.avatar && form.avatar.startsWith('/uploads/')) {
-        fd.append('previousAvatarUrl', form.avatar);
-      }
+      if (form.avatar && form.avatar.startsWith('/uploads/')) fd.append('previousAvatarUrl', form.avatar);
       const res = await fetch('/api/avatar', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal mengunggah avatar.');
@@ -423,10 +389,7 @@ export default function CharacterForm({
           mode: 'preview',
           character: {
             ...form,
-            tags: tagInput
-              .split(',')
-              .map((t) => t.trim())
-              .filter(Boolean),
+            tags: tagInput.split(',').map((t) => t.trim()).filter(Boolean),
           },
           messages: updatedMsgs,
         }),
@@ -451,25 +414,17 @@ export default function CharacterForm({
     setSaving(true);
     setError('');
     try {
-      const parsedTags = tagInput
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
-
+      const parsedTags = tagInput.split(',').map((t) => t.trim()).filter(Boolean);
       const payload = {
         ...form,
         tags: parsedTags,
         greeting: form.greeting.map((g) => g.trim()).filter(Boolean),
-        example_dialogues: form.example_dialogues.filter(
-          (d) => d.user.trim() || d.char.trim()
-        ),
+        example_dialogues: form.example_dialogues.filter((d) => d.user.trim() || d.char.trim()),
       };
 
       const url = isEdit && initialValues?.id ? `/api/characters/${initialValues.id}` : '/api/characters';
-      const method = isEdit ? 'PUT' : 'POST';
-
       const res = await fetch(url, {
-        method,
+        method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -490,16 +445,15 @@ export default function CharacterForm({
 
   return (
     <div className="space-y-6">
-      {/* Pemilih Mode di Bagian Atas (Buat Otomatis vs Form Manual vs Impor Kartu) */}
       {!isEdit && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-1.5 inline-flex items-center gap-1">
+        <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-1.5 inline-flex items-center gap-1 flex-wrap">
           <button
             type="button"
             onClick={() => setActiveMode('auto')}
             className={`h-9 px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
               activeMode === 'auto'
                 ? 'bg-indigo-600 text-white'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
@@ -510,8 +464,8 @@ export default function CharacterForm({
             onClick={() => setActiveMode('manual')}
             className={`h-9 px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
               activeMode === 'manual'
-                ? 'bg-slate-900 text-white'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                ? 'bg-slate-900 dark:bg-indigo-600 text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <span>Form Karakter Lengkap</span>
@@ -521,8 +475,8 @@ export default function CharacterForm({
             onClick={() => setActiveMode('import')}
             className={`h-9 px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
               activeMode === 'import'
-                ? 'bg-slate-900 text-white'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                ? 'bg-slate-900 dark:bg-indigo-600 text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <Upload className="w-3.5 h-3.5" />
@@ -532,218 +486,64 @@ export default function CharacterForm({
       )}
 
       {error && (
-        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-700 flex items-start gap-2.5">
+        <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-sm text-rose-700 dark:text-rose-300 flex items-start gap-2.5">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <span>{error}</span>
         </div>
       )}
 
       {notice && (
-        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 flex items-start gap-2.5">
+        <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-sm text-emerald-800 dark:text-emerald-300 flex items-start gap-2.5">
           <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
           <span>{notice}</span>
         </div>
       )}
 
-      {/* Panel 1: Pembuatan Otomatis dengan AI */}
       {activeMode === 'auto' && !isEdit && (
-        <section className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-2xs">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">
-              Pembuatan Karakter Otomatis & Riset AI
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Tulis satu atau dua kalimat ide. AI akan menentukan jenis riset, melengkapi semua kepribadian, gaya bicara, sapaan awal, serta contoh dialog untuk Anda tinjau.
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Ide Singkat Karakter
-              </label>
-              <textarea
-                rows={3}
-                value={ideaInput}
-                onChange={(e) => setIdeaInput(e.target.value)}
-                placeholder='Contoh: "Buatkan karakter Frieren dari anime Sousou no Frieren" atau "CEO startup logistik yang sarkastik dan gila kerja tapi peduli pada timnya"'
-                className="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Jenis Karakter
-                </label>
-                <select
-                  value={charTypeHint}
-                  onChange={(e) => setCharTypeHint(e.target.value as any)}
-                  className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="auto">Deteksi Otomatis oleh AI</option>
-                  <option value="existing">Tokoh yang Sudah Ada (Riset Kanon/Fakta)</option>
-                  <option value="original">Tokoh Orisinal (Kembangkan Kreatif)</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Tempel Teks Riset Manual / Wiki (Opsional - Bagian 11.2 Opsi C)
-              </label>
-              <textarea
-                rows={3}
-                value={manualResearchText}
-                onChange={(e) => setManualResearchText(e.target.value)}
-                placeholder="Jika ingin menyalin artikel wiki atau catatan latar tokoh sendiri, tempel di sini agar AI merangkum kartu karakter langsung dari teks Anda..."
-                className="w-full rounded-xl border border-slate-200 p-3 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-end pt-1">
-              <button
-                type="button"
-                disabled={generating}
-                onClick={handleGenerateAuto}
-                className="h-10 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>{generating ? 'Sedang Meriset & Menyusun Kartu...' : 'Riset & Isi Kartu Karakter'}</span>
-              </button>
-            </div>
-          </div>
-        </section>
+        <ResearchWizardPanel
+          ideaInput={ideaInput}
+          charTypeHint={charTypeHint}
+          manualResearchText={manualResearchText}
+          generating={generating}
+          onChangeIdea={setIdeaInput}
+          onChangeTypeHint={setCharTypeHint}
+          onChangeManualResearch={setManualResearchText}
+          onGenerate={handleGenerateAuto}
+        />
       )}
 
-      {/* Panel 2: Impor Kartu SillyTavern JSON / PNG */}
       {activeMode === 'import' && !isEdit && (
-        <section className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-2xs">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">
-              Impor Kartu Karakter SillyTavern (JSON / PNG)
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Unggah file kartu karakter berformat .json atau .png (Character Card V2). Gambar PNG akan otomatis dipakai sebagai avatar dan placeholder {'{{char}}'} serta {'{{user}}'} akan disesuaikan.
-            </p>
-          </div>
-
-          <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-indigo-500 rounded-2xl p-8 cursor-pointer transition-colors bg-slate-50/60">
-            <Upload className="w-7 h-7 text-indigo-600 mb-2" />
-            <span className="text-sm font-semibold text-slate-800">
-              {importing ? 'Membaca File Kartu...' : 'Pilih File Kartu Karakter (.PNG atau .JSON)'}
-            </span>
-            <span className="text-xs text-slate-500 mt-1">
-              Setelah diunggah, semua field akan terbuka di form untuk Anda tinjau sebelum disimpan.
-            </span>
-            <input
-              type="file"
-              accept=".png,.json,image/png,application/json"
-              onChange={handleImportCardFile}
-              disabled={importing}
-              className="hidden"
-            />
-          </label>
-        </section>
+        <ImportCardPanel importing={importing} onFileChange={handleImportCardFile} />
       )}
 
-      {/* Form Utama & Panel Pratinjau berdampingan */}
+      {(isEdit || activeMode === 'manual') && (
       <form onSubmit={handleSaveCharacter} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-5">
-          {/* Ringkasan Riset Otomatis jika tersedia */}
-          {form.research_notes?.summary && (
-            <div className="bg-indigo-50/70 rounded-2xl border border-indigo-200 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-indigo-900">
-                  Catatan Riset Karakter ({form.research_notes.mode === 'existing' ? 'Tokoh Kanon' : form.research_notes.mode === 'import' ? 'Impor Kartu' : 'Pengembangan Orisinal'})
-                </span>
-              </div>
-              <p className="text-xs text-indigo-950 leading-relaxed">{form.research_notes.summary}</p>
-              <ResearchSourceList sources={form.research_notes.sources} tone="indigo" />
-              {form.research_notes.uncertainFields?.length > 0 && (
-                <div className="text-[11px] text-amber-800 bg-amber-100/80 px-2.5 py-1.5 rounded-lg">
-                  Periksa kembali field berikut karena dirangkum dari ingatan model: {form.research_notes.uncertainFields.join(', ')}
-                </div>
-              )}
+          <ResearchNotesPanel
+            researchNotes={form.research_notes}
+            verificationResult={verificationResult}
+            revisionInput={revisionInput}
+            revising={revising}
+            onChangeRevision={setRevisionInput}
+            onApplyRevision={handleApplyRevision}
+          />
 
-              {/* Tampilkan Hasil Verifikasi Revisi Sebelumnya jika ada */}
-              {verificationResult && (
-                <div
-                  className={`p-3 rounded-xl border text-xs space-y-1 ${
-                    verificationResult.valid
-                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
-                      : 'bg-rose-50 border-rose-300 text-rose-950'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 font-bold">
-                    <span>
-                      {verificationResult.valid
-                        ? 'Verifikasi Fakta: Terverifikasi Sesuai'
-                        : 'Verifikasi Fakta: Tidak Sesuai Fakta Resmi/Kanon'}
-                    </span>
-                  </div>
-                  <p className="leading-relaxed">{verificationResult.explanation}</p>
-                </div>
-              )}
+          <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Identitas & Avatar Karakter</h3>
 
-              {/* Input Revisi Riset Berbasis Verifikasi Fakta */}
-              <div className="pt-2 border-t border-indigo-200/80 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-indigo-950">
-                    Revisi Riset & Fakta Karakter
-                  </label>
-                  <span className="text-[10px] text-indigo-700">Diverifikasi kebenaran faktanya sebelum diterapkan</span>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <textarea
-                    rows={3}
-                    value={revisionInput}
-                    onChange={(e) => setRevisionInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleApplyRevision();
-                      }
-                    }}
-                    placeholder='Contoh: "Ubah umurnya jadi 17 tahun dan tambahkan bahwa dia punya adik perempuan bernama Alisa"'
-                    className="w-full min-h-[84px] px-3 py-2.5 rounded-xl border border-indigo-200 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 shadow-2xs resize-none leading-relaxed"
-                  />
-                  <button
-                    type="button"
-                    disabled={revising || !revisionInput.trim()}
-                    onClick={handleApplyRevision}
-                    className="w-full sm:w-auto sm:self-end h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0 transition-colors shadow-2xs"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>{revising ? 'Memverifikasi...' : 'Verifikasi & Terapkan Revisi'}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Identitas Dasar & Avatar */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-2xs">
-            <h3 className="text-sm font-semibold text-slate-900">Identitas & Avatar Karakter</h3>
-
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 pb-3 border-b border-slate-100">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 pb-3 border-b border-slate-100 dark:border-slate-800">
               <CharacterAvatar name={form.name || 'N'} avatar={form.avatar} size="xl" />
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className="h-8 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5 cursor-pointer">
+                  <label className="h-8 px-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 cursor-pointer">
                     <ImageIcon className="w-3.5 h-3.5" />
                     <span>Unggah Gambar</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleAvatarUpload}
-                      className="hidden"
-                    />
+                    <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
                   </label>
                   <button
                     type="button"
                     onClick={handleGenerateSvgAvatar}
-                    className="h-8 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5"
+                    className="h-8 px-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5"
                   >
                     <Palette className="w-3.5 h-3.5" />
                     <span>Buat Avatar Monogram</span>
@@ -752,13 +552,13 @@ export default function CharacterForm({
                     <button
                       type="button"
                       onClick={() => setForm((p) => ({ ...p, avatar: '' }))}
-                      className="h-8 px-2.5 rounded-lg text-xs text-rose-600 hover:bg-rose-50"
+                      className="h-8 px-2.5 rounded-lg text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
                     >
                       Reset
                     </button>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   Mendukung unggahan gambar lokal atau generator monogram SVG otomatis.
                 </p>
               </div>
@@ -766,7 +566,7 @@ export default function CharacterForm({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Nama Karakter *
                 </label>
                 <input
@@ -775,18 +575,18 @@ export default function CharacterForm({
                   value={form.name}
                   onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
                   placeholder="Contoh: Kana Valerius"
-                  className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
+                  className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Dunia / Lorebook Tempat Tinggal
                 </label>
                 <select
                   value={form.world_id || ''}
                   onChange={(e) => setForm((p) => ({ ...p, world_id: e.target.value || null }))}
-                  className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:border-indigo-500"
+                  className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-100 bg-white dark:bg-[#111827] focus:outline-none focus:border-indigo-500"
                 >
                   <option value="">Tanpa Dunia Khusus (Mandiri)</option>
                   {worlds.map((w) => (
@@ -798,9 +598,10 @@ export default function CharacterForm({
               </div>
             </div>
 
-            {/* Visibilitas: pemilik menentukan sendiri apakah karakter ini terbuka untuk publik */}
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">Visibilitas Karakter</label>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Visibilitas Karakter
+              </label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {[
                   {
@@ -823,25 +624,38 @@ export default function CharacterForm({
                       aria-pressed={active}
                       className={`text-left p-3 rounded-xl border transition-colors ${
                         active
-                          ? 'border-slate-900 bg-slate-50 ring-1 ring-slate-900'
-                          : 'border-slate-200 hover:border-slate-300'
+                          ? 'border-slate-900 dark:border-indigo-500 bg-slate-50 dark:bg-indigo-950/30 ring-1 ring-slate-900 dark:ring-indigo-500'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
                       }`}
                     >
-                      <span className="block text-xs font-semibold text-slate-900">{opt.label}</span>
-                      <span className="block mt-0.5 text-[11px] leading-relaxed text-slate-500">{opt.desc}</span>
+                      <span className="block text-xs font-semibold text-slate-900 dark:text-white">{opt.label}</span>
+                      <span className="block mt-0.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                        {opt.desc}
+                      </span>
                     </button>
                   );
                 })}
               </div>
               {form.visibility === 'public' && (
-                <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-                  Riwayat percakapan dan memorimu tetap pribadi. Yang dibagikan hanya profil karakternya.
-                </p>
+                <div className="mt-2.5 space-y-2">
+                  <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                    Riwayat percakapan dan memorimu tetap pribadi. Yang dibagikan hanya profil karakternya.
+                  </p>
+                  <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.allow_remix}
+                      onChange={(e) => setForm((p) => ({ ...p, allow_remix: e.target.checked }))}
+                      className="rounded border-slate-300"
+                    />
+                    <span>Izinkan pengguna lain menyalin (Remix) & mengekspor kartu karakter ini</span>
+                  </label>
+                </div>
               )}
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Tagline (Satu Kalimat Pengenal)
               </label>
               <input
@@ -849,12 +663,12 @@ export default function CharacterForm({
                 value={form.tagline}
                 onChange={(e) => setForm((p) => ({ ...p, tagline: e.target.value }))}
                 placeholder="Contoh: Penyihir restorasi artefak yang selalu lapar"
-                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
+                className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Tag Pencarian (Pisahkan dengan koma)
               </label>
               <input
@@ -862,20 +676,19 @@ export default function CharacterForm({
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
                 placeholder="Fantasi, Sarkastik, Mentor, Misteri"
-                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-indigo-500"
+                className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
               />
             </div>
           </div>
 
-          {/* Personalisasi Mendalam */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-2xs">
+          <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold text-slate-900">Personalisasi & Peran</h3>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Personalisasi & Peran</h3>
               <button
                 type="button"
                 disabled={sanitizing}
                 onClick={handleSanitizeMetaSentences}
-                className="h-8 px-3 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[11px] font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors disabled:opacity-50"
+                className="h-8 px-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-700 dark:text-amber-300 text-[11px] font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors disabled:opacity-50"
                 title="Hapus kalimat tentang proses riset/roleplay yang bocor ke kolom personalisasi"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -884,23 +697,26 @@ export default function CharacterForm({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Deskripsi Karakter {isUncertain('description') && <span className="text-amber-600">(Periksa Ulang)</span>}
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Deskripsi Karakter{' '}
+                {isUncertain('description') && <span className="text-amber-600">(Periksa Ulang)</span>}
               </label>
               <textarea
                 rows={3}
                 value={form.description}
                 onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
                 placeholder="Siapa karakter ini, latar belakang singkat, dan hubungannya dengan pengguna..."
-                className={`w-full rounded-xl border p-3 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 ${
-                  isUncertain('description') ? 'border-amber-400 bg-amber-50/20' : 'border-slate-200'
+                className={`w-full rounded-xl border p-3 text-sm text-slate-900 dark:text-slate-100 bg-white dark:bg-[#111827] focus:outline-none focus:border-indigo-500 ${
+                  isUncertain('description')
+                    ? 'border-amber-400 bg-amber-50/20'
+                    : 'border-slate-200 dark:border-slate-700'
                 }`}
               />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Kepribadian & Sifat Utama
                 </label>
                 <textarea
@@ -908,12 +724,12 @@ export default function CharacterForm({
                   value={form.personality}
                   onChange={(e) => setForm((p) => ({ ...p, personality: e.target.value }))}
                   placeholder="Contoh: Ceria, sarkastik tipis, jujur, teliti saat bekerja..."
-                  className="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Gaya Bicara
                 </label>
                 <textarea
@@ -921,42 +737,44 @@ export default function CharacterForm({
                   value={form.speaking_style}
                   onChange={(e) => setForm((p) => ({ ...p, speaking_style: e.target.value }))}
                   placeholder="Contoh: Bahasa santai, memakai 'aku' dan 'kamu', suka memberi analogi..."
-                  className="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Latar / Skenario Awal {isUncertain('scenario') && <span className="text-amber-600">(Periksa Ulang)</span>}
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Latar / Skenario Awal{' '}
+                {isUncertain('scenario') && <span className="text-amber-600">(Periksa Ulang)</span>}
               </label>
               <textarea
                 rows={2}
                 value={form.scenario}
                 onChange={(e) => setForm((p) => ({ ...p, scenario: e.target.value }))}
                 placeholder="Situasi dan tempat ketika percakapan berlangsung..."
-                className={`w-full rounded-xl border p-3 text-sm text-slate-900 focus:outline-none focus:border-indigo-500 ${
-                  isUncertain('scenario') ? 'border-amber-400 bg-amber-50/20' : 'border-slate-200'
+                className={`w-full rounded-xl border p-3 text-sm text-slate-900 dark:text-slate-100 bg-white dark:bg-[#111827] focus:outline-none focus:border-indigo-500 ${
+                  isUncertain('scenario')
+                    ? 'border-amber-400 bg-amber-50/20'
+                    : 'border-slate-200 dark:border-slate-700'
                 }`}
               />
             </div>
           </div>
 
-          {/* Sapaan Awal Jamak */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3 shadow-2xs">
+          <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-3 shadow-2xs">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
                   Sapaan Awal (Bisa Lebih dari Satu)
                 </h3>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   Saat memulai chat baru, pengguna bisa memilih salah satu sapaan pembuka ini.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setForm((p) => ({ ...p, greeting: [...p.greeting, ''] }))}
-                className="h-8 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1"
+                className="h-8 px-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center gap-1"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Tambah Sapaan</span>
@@ -967,19 +785,14 @@ export default function CharacterForm({
               {form.greeting.map((g, idx) => (
                 <div key={idx} className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-slate-600">
+                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
                       Sapaan Awal #{idx + 1}
                     </span>
                     {form.greeting.length > 1 && (
                       <button
                         type="button"
-                        onClick={() =>
-                          setForm((p) => ({
-                            ...p,
-                            greeting: p.greeting.filter((_, i) => i !== idx),
-                          }))
-                        }
-                        className="text-xs text-rose-600 hover:underline inline-flex items-center gap-1"
+                        onClick={() => setForm((p) => ({ ...p, greeting: p.greeting.filter((_, i) => i !== idx) }))}
+                        className="text-xs text-rose-600 dark:text-rose-400 hover:underline inline-flex items-center gap-1"
                       >
                         <Trash2 className="w-3 h-3" />
                         <span>Hapus</span>
@@ -998,19 +811,18 @@ export default function CharacterForm({
                       });
                     }}
                     placeholder="Tulis pesan pertama karakter saat menyambut pengguna..."
-                    className="w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-900 focus:outline-none focus:border-indigo-500"
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-3 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                   />
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Contoh Dialog */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3 shadow-2xs">
+          <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-3 shadow-2xs">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">Contoh Dialog</h3>
-                <p className="text-[11px] text-slate-500">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Contoh Dialog</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   Pasangan pesan contoh untuk menjaga ritme dan kosakata karakter tetap konsisten.
                 </p>
               </div>
@@ -1022,7 +834,7 @@ export default function CharacterForm({
                     example_dialogues: [...p.example_dialogues, { user: '', char: '' }],
                   }))
                 }
-                className="h-8 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1"
+                className="h-8 px-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 inline-flex items-center gap-1"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Tambah Contoh</span>
@@ -1033,10 +845,10 @@ export default function CharacterForm({
               {form.example_dialogues.map((pair, idx) => (
                 <div
                   key={idx}
-                  className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5"
+                  className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-2.5"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-700">
+                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                       Contoh Dialog #{idx + 1}
                     </span>
                     {form.example_dialogues.length > 1 && (
@@ -1048,7 +860,7 @@ export default function CharacterForm({
                             example_dialogues: p.example_dialogues.filter((_, i) => i !== idx),
                           }))
                         }
-                        className="text-xs text-rose-600 hover:underline"
+                        className="text-xs text-rose-600 dark:text-rose-400 hover:underline"
                       >
                         Hapus
                       </button>
@@ -1066,7 +878,7 @@ export default function CharacterForm({
                       });
                     }}
                     placeholder="Ucapan Pengguna..."
-                    className="w-full h-8 px-3 rounded-lg border border-slate-200 bg-white text-xs text-slate-900"
+                    className="w-full h-8 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0c1220] text-xs text-slate-900 dark:text-slate-100"
                   />
                   <textarea
                     rows={2}
@@ -1080,7 +892,7 @@ export default function CharacterForm({
                       });
                     }}
                     placeholder="Jawaban Karakter..."
-                    className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs text-slate-900"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0c1220] p-2.5 text-xs text-slate-900 dark:text-slate-100"
                   />
                 </div>
               ))}
@@ -1091,14 +903,14 @@ export default function CharacterForm({
             <button
               type="button"
               onClick={() => router.back()}
-              className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              className="h-10 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
             >
               Batal
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="h-10 px-6 rounded-xl bg-slate-900 hover:bg-indigo-600 disabled:bg-slate-300 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors"
+              className="h-10 px-6 rounded-xl bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-600 dark:hover:bg-indigo-500 disabled:bg-slate-300 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors"
             >
               <Save className="w-4 h-4" />
               <span>{saving ? 'Menyimpan...' : isEdit ? 'Simpan Perubahan' : 'Simpan Karakter'}</span>
@@ -1106,89 +918,18 @@ export default function CharacterForm({
           </div>
         </div>
 
-        {/* Kolom Kanan: Uji Coba / Pratinjau Obrolan Sebelum Disimpan */}
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs sticky top-20 flex flex-col h-[520px]">
-            <div className="pb-3 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">Pratinjau Karakter</h3>
-                <p className="text-[11px] text-slate-500">
-                  Coba ajak mengobrol singkat sebelum karakter disimpan.
-                </p>
-              </div>
-              {previewMessages.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setPreviewMessages([])}
-                  className="text-[11px] text-slate-500 hover:text-slate-800"
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-
-            <div className="flex-1 overflow-y-auto py-3 space-y-3">
-              {previewMessages.length === 0 ? (
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70 text-xs text-slate-600 leading-relaxed whitespace-pre-line">
-                  {form.greeting[0]?.trim() ||
-                    'Isi profil karakter di samping atau gunakan Buat Otomatis, lalu kirim pesan uji coba di bawah.'}
-                </div>
-              ) : (
-                previewMessages.map((m, i) => (
-                  <div
-                    key={i}
-                    className={`flex flex-col min-w-0 ${
-                      m.role === 'user' ? 'items-end' : 'items-start'
-                    }`}
-                  >
-                    <span className="text-[10px] font-medium text-slate-400 mb-0.5 px-1">
-                      {m.role === 'user' ? 'Kamu' : form.name || 'Karakter'}
-                    </span>
-                    <div
-                      className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed whitespace-pre-line break-words [overflow-wrap:anywhere] ${
-                        m.role === 'character'
-                          ? 'bg-slate-100 text-slate-900 rounded-tl-xs'
-                          : 'bg-slate-900 text-white rounded-tr-xs'
-                      }`}
-                    >
-                      <FormattedMessage content={m.content} isUser={m.role !== 'character'} />
-                    </div>
-                  </div>
-                ))
-              )}
-              {previewLoading && (
-                <div className="text-xs text-slate-400 italic">
-                  {form.name || 'Karakter'} sedang mengetik...
-                </div>
-              )}
-            </div>
-
-            <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
-              <input
-                type="text"
-                value={previewInput}
-                onChange={(e) => setPreviewInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleSendPreview();
-                  }
-                }}
-                placeholder="Ketik pesan uji coba..."
-                className="flex-1 h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
-              />
-              <button
-                type="button"
-                disabled={previewLoading || !previewInput.trim()}
-                onClick={handleSendPreview}
-                className="w-9 h-9 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white inline-flex items-center justify-center shrink-0"
-              >
-                <Send className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
+        <CharacterPreviewSidebar
+          characterName={form.name}
+          firstGreeting={form.greeting[0]?.trim() || ''}
+          messages={previewMessages}
+          input={previewInput}
+          loading={previewLoading}
+          onChangeInput={setPreviewInput}
+          onSend={handleSendPreview}
+          onReset={() => setPreviewMessages([])}
+        />
       </form>
+      )}
 
       <ImageCropModal
         open={Boolean(cropImageSrc)}

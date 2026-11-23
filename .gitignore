@@ -24,6 +24,8 @@ data/*.sqlite
 !data/.gitkeep
 
 # File Upload Avatar & Media
+data/uploads/*
+!data/uploads/.gitkeep
 public/uploads/*
 !public/uploads/.gitkeep
 

@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { buildCharacterSystemPrompt } from '@/lib/character';
-import { CharacterRow, execute, MemoryRow, nowIso, query, queryOne } from '@/lib/db';
+import { execute, nowIso, query, queryOne } from '@/lib/db';
 import { stripOwner } from '@/lib/format';
+import {
+  buildGroupTurnContext,
+  GROUP_MESSAGES_SQL,
+  GroupMessageRow,
+  loadGroupMembers,
+} from '@/lib/groupTurn';
 import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
-import { cleanCharacterOutput, generateLLMResponse, LLMMessage } from '@/lib/llm';
-import { getRelevantLore } from '@/lib/lore';
+import { cleanCharacterOutput, generateLLMResponse } from '@/lib/llm';
 import { enforceLlmRateLimit } from '@/lib/rateLimit';
 import {
   formatPersona,
@@ -20,43 +24,43 @@ export const runtime = 'nodejs';
 
 type Ctx = { params: Promise<{ id: string }> };
 
-interface GroupMessageRow {
-  id: string;
-  group_chat_id: string;
-  role: 'user' | 'character';
-  character_id: string | null;
-  character_name?: string;
-  character_avatar?: string;
-  content: string;
-  created_at: string;
-}
-
-async function loadMembers(groupId: string, userId: string) {
-  return query<CharacterRow>(
-    `SELECT c.* FROM group_chat_members gm
-     JOIN characters c ON gm.character_id = c.id
-     WHERE gm.group_chat_id = $1 AND c.user_id = $2
-     ORDER BY gm.join_order ASC`,
-    [groupId, userId]
-  );
-}
-
-const GROUP_MESSAGES_SQL = `
-  SELECT gm.*, c.name AS character_name, c.avatar AS character_avatar
-  FROM group_messages gm
-  LEFT JOIN characters c ON gm.character_id = c.id`;
-
 export async function GET(req: NextRequest, context: Ctx) {
   try {
     const user = await requireUser(req);
     const { id } = await context.params;
     const groupChat = await requireOwnedGroupChat(user.id, id);
 
-    const [members, messages, personas] = await Promise.all([
-      loadMembers(id, user.id),
-      query<GroupMessageRow>(`${GROUP_MESSAGES_SQL} WHERE gm.group_chat_id = $1 ORDER BY gm.created_at ASC`, [id]),
-      getAllPersonas(user.id),
-    ]);
+    const url = new URL(req.url);
+    const limitParam = parseInt(url.searchParams.get('limit') || '60', 10);
+    const limit = Number.isFinite(limitParam) ? Math.max(10, Math.min(200, limitParam)) : 60;
+    const before = url.searchParams.get('before')?.trim() || '';
+    const messagesOnly = url.searchParams.get('messagesOnly') === '1';
+
+    const countRow = await queryOne<{ cnt: number }>(
+      'SELECT COUNT(*) AS cnt FROM group_messages WHERE group_chat_id = $1',
+      [id]
+    );
+    const totalMessages = Number(countRow?.cnt || 0);
+
+    const fetchedDesc = before
+      ? await query<GroupMessageRow>(
+          `${GROUP_MESSAGES_SQL} WHERE gm.group_chat_id = $1 AND gm.created_at < $2 ORDER BY gm.created_at DESC LIMIT $3`,
+          [id, before, limit + 1]
+        )
+      : await query<GroupMessageRow>(
+          `${GROUP_MESSAGES_SQL} WHERE gm.group_chat_id = $1 ORDER BY gm.created_at DESC LIMIT $2`,
+          [id, limit + 1]
+        );
+
+    const hasMoreMessages = fetchedDesc.length > limit;
+    const messages = (hasMoreMessages ? fetchedDesc.slice(0, limit) : fetchedDesc).reverse();
+    const oldestCursor = messages[0]?.created_at || null;
+
+    if (messagesOnly) {
+      return NextResponse.json({ messages, totalMessages, hasMoreMessages, oldestCursor });
+    }
+
+    const [members, personas] = await Promise.all([loadGroupMembers(id, user.id), getAllPersonas(user.id)]);
     const activePersona = groupChat.persona_id
       ? await getPersonaById(user.id, groupChat.persona_id)
       : await getDefaultPersona(user.id);
@@ -65,6 +69,9 @@ export async function GET(req: NextRequest, context: Ctx) {
       groupChat: { ...stripOwner(groupChat), persona_id: groupChat.persona_id || activePersona?.id || null },
       members: members.map(stripOwner),
       messages,
+      totalMessages,
+      hasMoreMessages,
+      oldestCursor,
       activePersona: formatPersona(activePersona),
       personas: personas.map(formatPersona),
     });
@@ -81,13 +88,8 @@ export async function POST(req: NextRequest, context: Ctx) {
     const body = await readJson(req);
     const groupChat = await requireOwnedGroupChat(user.id, id);
 
-    const members = await loadMembers(id, user.id);
+    const members = await loadGroupMembers(id, user.id);
     if (members.length === 0) return jsonError('Tidak ada anggota karakter di dalam grup ini.', 400);
-
-    const persona = groupChat.persona_id
-      ? await getPersonaById(user.id, groupChat.persona_id)
-      : await getDefaultPersona(user.id);
-    const userName = persona?.display_name || 'Kamu';
 
     const userContent = String(body.content || '').trim();
     if (userContent.length > 20000) return jsonError('Pesan terlalu panjang.', 400);
@@ -107,80 +109,20 @@ export async function POST(req: NextRequest, context: Ctx) {
       [id]
     );
 
-    // Tentukan karakter yang mendapat giliran bicara
-    let activeSpeaker: CharacterRow | undefined = forcedCharacterId
-      ? members.find((m) => m.id === forcedCharacterId)
-      : undefined;
-
-    if (!activeSpeaker) {
-      const lastMessageText = (history[history.length - 1]?.content || '').toLowerCase();
-      const mentioned = members.find((m) => {
-        const firstName = m.name.split(/\s+/)[0].toLowerCase();
-        return (
-          m.id !== groupChat.last_speaker_id &&
-          (lastMessageText.includes(m.name.toLowerCase()) ||
-            (firstName.length >= 3 && lastMessageText.includes(firstName)))
-        );
-      });
-      if (mentioned) {
-        activeSpeaker = mentioned;
-      } else {
-        const lastIdx = members.findIndex((m) => m.id === groupChat.last_speaker_id);
-        activeSpeaker = members[(lastIdx + 1) % members.length] || members[0];
-      }
-    }
-    const speaker = activeSpeaker;
-
-    const otherMemberNames = members
-      .filter((m) => m.id !== speaker.id)
-      .map((m) => `${m.name} (${m.tagline || m.personality.slice(0, 60)})`)
-      .join('; ');
-
-    const recentText = history.slice(-15).map((m) => m.content).join('\n');
-    const [lore, memories] = await Promise.all([
-      getRelevantLore(user.id, speaker.world_id, recentText),
-      query<MemoryRow>(
-        `SELECT * FROM memories WHERE user_id = $2 AND (character_id = $1 OR character_id IS NULL)
-         ORDER BY created_at DESC LIMIT 15`,
-        [speaker.id, user.id]
-      ),
-    ]);
-
-    const baseSysPrompt = buildCharacterSystemPrompt({
-      character: speaker,
-      persona: persona || null,
-      memories,
-      lore,
-      replyStyle: 'sedang',
+    const { speaker, llmMessages, temperature, maxTokens } = await buildGroupTurnContext({
+      userId: user.id,
+      groupChat,
+      members,
+      history,
+      forcedCharacterId,
     });
 
-    const groupSysPrompt = `${baseSysPrompt}
-
-KONTEKS GRUP CHAT MULTI-KARAKTER:
-- Judul Ruang: ${groupChat.title}
-${groupChat.scenario ? `- Situasi Grup: ${groupChat.scenario}` : ''}
-- Karakter lain yang hadir di ruangan ini bersama kamu dan ${userName}: ${otherMemberNames}.
-- Kamu HANYA berbicara dan bertindak sebagai ${speaker.name}. Jangan menuliskan dialog atas nama karakter lain atau atas nama ${userName}.`;
-
-    const transcriptLines = history.slice(-18).map((m) => {
-      const speakerName = m.role === 'user' ? userName : m.character_name || 'Karakter';
-      return `${speakerName}: ${m.content}`;
-    });
-
-    const llmMessages: LLMMessage[] = [
-      { role: 'system', content: groupSysPrompt },
-      {
-        role: 'user',
-        content: `RIWAYAT PERCAKAPAN GRUP SAAT INI:\n${transcriptLines.join('\n\n')}\n\nSekarang giliran ${speaker.name} merespons secara natural sesuai kepribadiannya:`,
-      },
-    ];
-
-    let llmRes;
+    let llmRes: Awaited<ReturnType<typeof generateLLMResponse>>;
     try {
       llmRes = await generateLLMResponse(llmMessages, {
         userId: user.id,
-        temperature: groupChat.temperature || 0.9,
-        maxTokens: groupChat.max_tokens || 1024,
+        temperature,
+        maxTokens,
         characterId: speaker.id,
         chatId: id,
         actionType: 'group_chat',

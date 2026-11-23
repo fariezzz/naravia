@@ -37,10 +37,10 @@ services:
       # Menimpa DATABASE_URL dari .env agar selalu menunjuk ke service db di jaringan Docker
       - DATABASE_URL=postgres://${POSTGRES_USER:-naravia}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-naravia}
     volumes:
-      # File unggahan avatar persisten
-      - ./public/uploads:/app/public/uploads
-      # Database SQLite lama untuk migrasi satu kali (tidak read-only: SQLite mode WAL butuh akses tulis ke file -shm)
+      # Folder data persisten (termasuk unggahan avatar di data/uploads dan DB SQLite lama)
       - ./data:/app/data
+      # Kompatibilitas mundur: unggahan lama dari ./public/uploads otomatis dipindah ke /app/data/uploads saat start
+      - ./public/uploads:/app/public/uploads
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3002/api/health || exit 1"]
       interval: 30s

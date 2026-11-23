@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { clearSessionCookie, requireUser, revokeUserSessions } from '@/lib/auth';
+import {
+  clearSessionCookie,
+  listUserSessions,
+  requireUser,
+  revokeSessionById,
+  revokeUserSessions,
+} from '@/lib/auth';
 import { execute, queryOne } from '@/lib/db';
 import { getClientIp, handleApiError, jsonError, readJson } from '@/lib/http';
 import { hashPassword, validatePasswordStrength, verifyPassword } from '@/lib/password';
@@ -11,14 +17,13 @@ export const runtime = 'nodejs';
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
-    const sessions = await queryOne<{ cnt: number }>(
-      'SELECT COUNT(*) AS cnt FROM sessions WHERE user_id = $1 AND expires_at > now()',
-      [user.id]
-    );
-    const row = await queryOne<{ created_at: string; last_login_at: string | null }>(
-      'SELECT created_at, last_login_at FROM users WHERE id = $1',
-      [user.id]
-    );
+    const [sessions, row] = await Promise.all([
+      listUserSessions(user.id, user.sessionId),
+      queryOne<{ created_at: string; last_login_at: string | null }>(
+        'SELECT created_at, last_login_at FROM users WHERE id = $1',
+        [user.id]
+      ),
+    ]);
     return NextResponse.json({
       account: {
         email: user.email,
@@ -26,7 +31,8 @@ export async function GET(req: NextRequest) {
         role: user.role,
         created_at: row?.created_at || null,
         last_login_at: row?.last_login_at || null,
-        active_sessions: Number(sessions?.cnt || 0),
+        active_sessions: sessions.length,
+        sessions,
       },
     });
   } catch (err) {
@@ -70,6 +76,18 @@ export async function POST(req: NextRequest) {
       await revokeUserSessions(user.id, user.sessionId);
       await logAudit({ userId: user.id, actorEmail: user.email, action: 'ganti_kata_sandi', ip });
       return NextResponse.json({ success: true });
+    }
+
+    if (body.action === 'revoke_session') {
+      const targetSessionId = String(body.session_id || '').trim();
+      if (!targetSessionId) return jsonError('ID sesi tidak valid.', 400);
+      const removed = await revokeSessionById(user.id, targetSessionId);
+      if (removed === 0) return jsonError('Sesi tidak ditemukan.', 404);
+      const revokedSelf = targetSessionId === user.sessionId;
+      await logAudit({ userId: user.id, actorEmail: user.email, action: 'cabut_sesi_perangkat', ip });
+      const res = NextResponse.json({ success: true, revokedSelf });
+      if (revokedSelf) clearSessionCookie(res);
+      return res;
     }
 
     if (body.action === 'logout_others') {

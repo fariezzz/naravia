@@ -13,23 +13,25 @@ Platform percakapan dan roleplay karakter AI multi-pengguna berbasis **Next.js 1
 - **Peran Admin**: Panel Admin (`/admin`) untuk mengelola pengguna (buat, ubah peran, nonaktifkan, reset kata sandi, cabut sesi, hapus), mengatur provider AI dan kunci API global, membuka atau menutup pendaftaran, mengatur kuota token, serta melihat statistik dan log audit. Isi percakapan pengguna tidak pernah ditampilkan ke admin.
 - **Kuota Token Harian**: ditegakkan di server, bukan hanya ditampilkan. Bisa diatur bawaan sistem atau per akun. Admin tidak dibatasi.
 - **Pembatas Laju**: percobaan masuk, pendaftaran, panggilan model AI, riset, dan unggahan dibatasi per IP atau akun.
-- **Otorisasi File Per Berkas**: avatar karakter publik bisa dimuat siapa pun, avatar privat hanya oleh pemiliknya. Keputusan diambil di route `/uploads/*`, bukan di middleware.
+- **Otorisasi File Per Berkas**: avatar karakter publik bisa dimuat siapa pun, avatar privat hanya oleh pemiliknya (dan arsip percakapan terkait). Berkas disimpan di `data/uploads/` (di luar `public/`) sehingga 100% permintaan wajib melewati route otorisasi `/uploads/*`.
+- **Enkripsi API Key & Manajemen Sesi Perangkat**: kunci API di `system_settings` otomatis dienkripsi dengan AES-256-GCM bila `SETTINGS_ENCRYPTION_KEY` diisi, sesi kedaluwarsa dibersihkan berkala, dan pengguna bisa melihat serta mencabut sesi per perangkat di Pengaturan Akun.
 
 ### Karakter
 
 - **Pembuat & Pengimpor Karakter**: riset otomatis berbasis AI atau pencarian web, dan impor kartu SillyTavern (PNG/JSON).
-- **Visibilitas Pribadi atau Publik**: karakter baru selalu privat sampai pemiliknya menerbitkannya. Karakter publik tampil di katalog `/jelajah` dengan nama pembuat, tanpa membocorkan catatan riset, contoh dialog, atau email pembuat.
+- **Visibilitas Pribadi atau Publik + Bookmark & Remix**: karakter baru selalu privat sampai pemiliknya menerbitkannya. Karakter publik tampil di katalog `/jelajah` dengan filter multi-tag, bookmark/simpan, dan opsi **Remix** (bila diizinkan pembuat) tanpa membocorkan catatan riset atau email pembuat.
+- **Ekspor & Impor Kartu SillyTavern V2**: mendukung impor dan ekspor kartu karakter dalam format JSON maupun PNG (chunk `tEXt chara`).
 - **Sumber Riset Terkurasi**: tautan dinormalkan, parameter pelacak dibuang, duplikat dihapus, dan sumber yang tidak membahas karakternya disaring. Daftar sumber hanya tampil di tempat peninjauan dalam keadaan terlipat.
 - **Arsip Baca-Saja**: bila pembuat menghapus karakternya, percakapan yang sudah ada tetap bisa dibaca lewat snapshot karakter, tetapi pesan baru ditolak.
 
 ### Percakapan
 
-- **Streaming balasan** dengan tombol berhenti, serta swipe dan regenerate untuk mencari varian jawaban.
-- **Mundur (Rewind)**: kembali ke satu pesan lama, lalu hapus pesan itu beserta semua pesan sesudahnya. Ingatan yang bersumber dari pesan yang dihapus ikut dibuang, dan ringkasan yang cakupannya sudah tidak sahih disusun ulang. Seluruhnya berjalan dalam satu transaksi.
-- **Multi-Persona**, grup chat multi-karakter, lorebook berbasis kata kunci, memori jangka panjang, dan judul chat otomatis.
-- **Beranda Dua Wajah**: halaman perkenalan untuk tamu, dashboard pribadi untuk yang sudah masuk. Dashboard memuat percakapan terakhir, koleksi karakter sendiri, dan bagian "Pernah Diajak Chat" untuk karakter publik orang lain.
-- **Dukungan Universal LLM**: OpenAI-compatible (OpenRouter, Groq, DeepSeek, 9Router, Ollama, dan lainnya) serta Google AI Studio, dengan model riset terpisah opsional.
-- **Ekspor Data**: setiap pengguna bisa mengunduh seluruh datanya dalam format JSON.
+- **Streaming balasan** di chat 1-on-1 maupun **Grup Chat** dengan tombol berhenti, paginasi riwayat pesan, swipe & regenerate, pintasan keyboard desktop (`Esc`, `Alt+←/→`), dan pembacaan suara opsional (TTS).
+- **Cabangkan Cerita (Fork) & Mundur (Rewind)**: cabangkan percakapan dari pesan mana pun untuk mencoba alur cerita alternatif tanpa menghapus timeline asli, atau mundur untuk menghapus pesan beserta ingatan turunannya dalam satu transaksi.
+- **Inspektor Konteks & Memori Hibrida**: panel inspektor menampilkan estimasi token prompt, lorebook yang terpicu (pencocokan batas kata Unicode + batas karakter), sisa kuota harian, serta memori yang dipilih lewat peringkat hibrida (embedding semantik cosine similarity + relevansi leksikal & recency).
+- **Multi-Persona**, grup chat multi-karakter, lorebook berbasis kata kunci, dan judul chat otomatis.
+- **Dukungan Universal LLM + Auto-Fallback**: OpenAI-compatible (OpenRouter, Groq, DeepSeek, 9Router, Ollama, dan lainnya) serta Google AI Studio, dilengkapi timeout request, model riset terpisah, model embedding opsional, dan provider cadangan otomatis bila provider utama error/rate-limit.
+- **Ekspor & Pulihkan Cadangan Penuh**: setiap pengguna bisa mengunduh seluruh datanya dalam format JSON dan memulihkannya kembali di tab Pengaturan → Data.
 - **Tema Terang dan Gelap**: dipilih di Pengaturan, tab Preferensi Chat, dan berlaku per perangkat.
 
 ---
@@ -87,6 +89,8 @@ Perintah lain yang tersedia:
 
 ```bash
 npm run typecheck   # Pemeriksaan tipe TypeScript
+npm run test        # Jalankan unit test Vitest
+npm run lint        # Pemeriksaan kode dengan Biome
 npm run build       # Build produksi
 npm run start       # Jalankan hasil build
 ```
@@ -153,5 +157,5 @@ Panduan Proxmox LXC dan Cloudflare Tunnel ada di [PANDUAN_DEPLOY_PROXMOX.md](./P
 Tiga hal yang perlu dicadangkan terpisah:
 
 1. **Database**: `pg_dump` seperti contoh di atas.
-2. **Berkas unggahan**: direktori `public/uploads`.
+2. **Berkas unggahan**: direktori `data/uploads`.
 3. **Data per pengguna**: ekspor JSON dari halaman Pengaturan, tab Data.

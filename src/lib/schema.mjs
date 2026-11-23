@@ -80,9 +80,17 @@ CREATE TABLE IF NOT EXISTS characters (
   temperature_override DOUBLE PRECISION DEFAULT NULL,
   -- 'private' hanya pemilik, 'public' bisa dilihat siapa pun termasuk tamu
   visibility TEXT NOT NULL DEFAULT 'private',
+  allow_remix INTEGER NOT NULL DEFAULT 0,
   published_at TIMESTAMPTZ DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS character_bookmarks (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, character_id)
 );
 
 CREATE TABLE IF NOT EXISTS user_personas (
@@ -140,6 +148,7 @@ CREATE TABLE IF NOT EXISTS memories (
   source_chat_id TEXT DEFAULT NULL,
   source_message_id TEXT DEFAULT NULL,
   is_auto INTEGER DEFAULT 0,
+  embedding TEXT DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -260,4 +269,19 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_characters_public
   ON characters(published_at DESC) WHERE visibility = 'public';
+
+-- Kolom vektor embedding opsional untuk pencarian memori semantik
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding TEXT DEFAULT NULL;
+
+-- Izin remix untuk karakter publik & tabel bookmark karakter publik
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS allow_remix INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS character_bookmarks (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, character_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON character_bookmarks(user_id, created_at DESC);
 `;

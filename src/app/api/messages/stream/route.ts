@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
     let llmMessages: LLMMessage[];
     let temperature: number;
     let maxTokens: number;
+    let matchedLore: Array<{ id: string; title: string; keywords: string[]; matchedKeywords: string[]; content: string }> = [];
     let existingAlternatives: string[] = [];
     let userMessageRow: MessageRow | null = null;
 
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
         // Mengulang pesan pertama berarti tidak ada riwayat sebelumnya
         isOpeningLine: historyBefore.length === 0,
       });
-      ({ llmMessages, temperature, maxTokens } = ctx);
+      ({ llmMessages, temperature, maxTokens, matchedLore } = ctx);
       charMessageId = msg.id;
     } else {
       // Alur kirim pesan baru / lanjutkan narasi
@@ -98,7 +99,7 @@ export async function POST(req: NextRequest) {
         historyMessages: pastMessages,
         isContinuation: Boolean(body.isContinue || !userText),
       });
-      ({ llmMessages, temperature, maxTokens } = ctx);
+      ({ llmMessages, temperature, maxTokens, matchedLore } = ctx);
 
       charMessageId = newId('msg');
       await execute(
@@ -151,6 +152,7 @@ export async function POST(req: NextRequest) {
               characterMessageId: finalCharMessageId,
               isRegenerate: regenerating,
               userMessage: userMessageRow ? formatMessageRow(userMessageRow) : null,
+              matchedLore: matchedLore.map((l) => ({ id: l.id, title: l.title, matchedKeywords: l.matchedKeywords })),
             })
           );
 

@@ -199,14 +199,17 @@ async function main() {
     stats.push({ table: 'user_settings', read: userCount, inserted: userCount });
 
     // 9. Catat kepemilikan file unggahan yang dirujuk data lama
-    const uploadsDir = path.resolve('public', 'uploads');
+    const uploadsDir = path.resolve('data', 'uploads');
+    const legacyUploadsDir = path.resolve('public', 'uploads');
     const avatars = new Set(
       [...characters, ...personas].map((r) => String(r.avatar || '')).filter((a) => a.startsWith('/uploads/'))
     );
     let uploadCount = 0;
     for (const url of avatars) {
       const filename = path.basename(url);
-      const full = path.join(uploadsDir, filename);
+      const primary = path.join(uploadsDir, filename);
+      const legacy = path.join(legacyUploadsDir, filename);
+      const full = fs.existsSync(primary) ? primary : legacy;
       const size = fs.existsSync(full) ? fs.statSync(full).size : 0;
       const res = await client.query(
         'INSERT INTO uploads (filename, user_id, size_bytes) VALUES ($1, $2, $3) ON CONFLICT (filename) DO NOTHING',

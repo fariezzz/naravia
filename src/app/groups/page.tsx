@@ -123,23 +123,25 @@ export default function GroupsPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedCharIds([]);
-            setTitleInput('');
-            setScenarioInput('');
-            setShowCreateModal(true);
-          }}
-          className="w-full sm:w-auto h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Buat Grup Chat</span>
-        </button>
+        {groupChats.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedCharIds([]);
+              setTitleInput('');
+              setScenarioInput('');
+              setShowCreateModal(true);
+            }}
+            className="w-full sm:w-auto h-9 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Buat Grup Chat</span>
+          </button>
+        )}
       </header>
 
       {error && (
-        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2">
+        <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{error}</span>
         </div>
@@ -148,10 +150,10 @@ export default function GroupsPage() {
       {loading ? (
         <div className="text-xs text-slate-400">Memuat ruang grup chat...</div>
       ) : groupChats.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center space-y-3">
-          <Users className="w-8 h-8 text-indigo-600 mx-auto" />
-          <p className="text-base font-semibold text-slate-800">Belum Ada Grup Chat</p>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3">
+          <Users className="w-8 h-8 text-indigo-600 dark:text-indigo-400 mx-auto" />
+          <p className="text-base font-semibold text-slate-800 dark:text-slate-100">Belum Ada Grup Chat</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
             Gabungkan beberapa karakter favorit Anda dalam satu skenario diskusi atau petualangan bersama.
           </p>
           <button
@@ -168,22 +170,22 @@ export default function GroupsPage() {
           {groupChats.map((g) => (
             <div
               key={g.id}
-              className="bg-white rounded-2xl border border-slate-200 p-4 hover:border-indigo-300 transition-all flex flex-col justify-between gap-4 shadow-2xs"
+              className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 hover:border-indigo-300 dark:hover:border-indigo-500/60 transition-all flex flex-col justify-between gap-4 shadow-2xs"
             >
               <div className="space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <Link href={`/groups/${g.id}`} className="group flex-1 min-w-0">
-                    <h3 className="text-base font-semibold text-slate-900 group-hover:text-indigo-600 truncate">
+                    <h3 className="text-base font-semibold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate">
                       {g.title}
                     </h3>
                     {g.scenario && (
-                      <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">{g.scenario}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">{g.scenario}</p>
                     )}
                   </Link>
                   <button
                     type="button"
                     onClick={() => setDeleteTargetId(g.id)}
-                    className="w-7 h-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 inline-flex items-center justify-center"
+                    className="w-7 h-7 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 inline-flex items-center justify-center"
                     title="Hapus Grup"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -194,7 +196,7 @@ export default function GroupsPage() {
                   {(g.members || []).map((m: any) => (
                     <span
                       key={m.id}
-                      className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 text-xs font-medium inline-flex items-center gap-1.5"
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-medium inline-flex items-center gap-1.5"
                     >
                       <CharacterAvatar name={m.name} avatar={m.avatar} size="sm" />
                       <span>{m.name}</span>
@@ -203,11 +205,11 @@ export default function GroupsPage() {
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                <span className="text-slate-500">{g.message_count || 0} pesan</span>
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+                <span className="text-slate-500 dark:text-slate-400">{g.message_count || 0} pesan</span>
                 <Link
                   href={`/groups/${g.id}`}
-                  className="font-semibold text-indigo-600 hover:underline inline-flex items-center gap-1"
+                  className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-1"
                 >
                   <span>Buka Ruang Grup</span>
                   <ChevronRight className="w-3.5 h-3.5" />
@@ -220,20 +222,20 @@ export default function GroupsPage() {
 
       {/* Modal Buat Grup Chat Baru */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
           <form
             onSubmit={handleCreateGroup}
-            className="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-5 shadow-xl space-y-4"
+            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-lg w-full p-5 shadow-xl space-y-4"
           >
             <div>
-              <h3 className="text-base font-semibold text-slate-900">Buat Grup Chat Baru</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white">Buat Grup Chat Baru</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Pilih minimal 2 karakter yang akan berinteraksi bersama di ruangan ini.
               </p>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Judul Ruang Grup (Opsional)
               </label>
               <input
@@ -241,12 +243,12 @@ export default function GroupsPage() {
                 value={titleInput}
                 onChange={(e) => setTitleInput(e.target.value)}
                 placeholder="Contoh: Diskusi Tengah Malam di Baker Street"
-                className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-slate-900"
+                className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Situasi / Skenario Pertemuan (Opsional)
               </label>
               <textarea
@@ -254,12 +256,12 @@ export default function GroupsPage() {
                 value={scenarioInput}
                 onChange={(e) => setScenarioInput(e.target.value)}
                 placeholder="Jelaskan secara singkat di mana mereka sedang berkumpul dan apa topiknya..."
-                className="w-full rounded-xl border border-slate-200 p-2.5 text-xs text-slate-900"
+                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-2.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                 Pilih Anggota Karakter ({selectedCharIds.length} dipilih) *
               </label>
               <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
@@ -272,14 +274,14 @@ export default function GroupsPage() {
                       onClick={() => toggleCharacterSelection(c.id)}
                       className={`w-full text-left p-2.5 rounded-xl border flex items-center gap-3 transition-all ${
                         selected
-                          ? 'border-indigo-600 bg-indigo-50/50 ring-1 ring-indigo-600'
-                          : 'border-slate-200 hover:border-slate-300'
+                          ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/40 ring-1 ring-indigo-600 dark:ring-indigo-500'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
                       }`}
                     >
                       <CharacterAvatar name={c.name} avatar={c.avatar} size="sm" />
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-semibold text-slate-900 truncate">{c.name}</p>
-                        <p className="text-[11px] text-slate-500 truncate">{c.tagline}</p>
+                        <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">{c.name}</p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{c.tagline}</p>
                       </div>
                     </button>
                   );
@@ -287,18 +289,18 @@ export default function GroupsPage() {
               </div>
             </div>
 
-            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 border-t border-slate-100">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setShowCreateModal(false)}
-                className="w-full sm:w-auto h-9 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-700"
+                className="w-full sm:w-auto h-9 px-4 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
               >
                 Batal
               </button>
               <button
                 type="submit"
                 disabled={creating || selectedCharIds.length < 2}
-                className="w-full sm:w-auto h-9 px-5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-xs font-semibold"
+                className="w-full sm:w-auto h-9 px-5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-500 dark:disabled:text-slate-500 text-white text-xs font-semibold transition-colors"
               >
                 {creating ? 'Membuat...' : 'Mulai Grup Chat'}
               </button>

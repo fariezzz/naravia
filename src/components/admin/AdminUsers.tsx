@@ -162,63 +162,70 @@ export default function AdminUsers() {
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
                   <th className="py-2 pr-3 font-semibold">Akun</th>
-                  <th className="py-2 pr-3 font-semibold">Peran</th>
-                  <th className="py-2 pr-3 font-semibold">Status</th>
-                  <th className="py-2 pr-3 font-semibold">Token Hari Ini</th>
-                  <th className="py-2 pr-3 font-semibold">Kuota Harian</th>
-                  <th className="py-2 pr-3 font-semibold">Isi</th>
-                  <th className="py-2 pr-3 font-semibold">Terakhir Masuk</th>
+                  <th className="py-2 pr-3 font-semibold">Peran & Status</th>
+                  <th className="py-2 pr-3 font-semibold">Token / Kuota</th>
+                  <th className="py-2 pr-3 font-semibold">Konten</th>
                   <th className="py-2 font-semibold text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filtered.map((u) => {
                   const isMe = u.id === me?.id;
+                  const quotaLabel =
+                    u.role === 'admin'
+                      ? 'Tanpa batas'
+                      : u.daily_token_budget === null
+                        ? 'Bawaan sistem'
+                        : u.daily_token_budget === 0
+                          ? 'Tanpa batas'
+                          : formatNumber(u.daily_token_budget);
+
                   return (
                     <tr key={u.id}>
-                      <td className="py-2.5 pr-3">
+                      <td className="py-2.5 pr-3 min-w-[180px]">
                         <p className="font-semibold text-slate-900 dark:text-white">
                           {u.display_name}
                           {isMe && <span className="ml-1.5 text-[10px] font-normal text-slate-400">(Kamu)</span>}
                         </p>
-                        <p className="text-slate-500 dark:text-slate-400">{u.email}</p>
+                        <p className="text-slate-500 dark:text-slate-400 truncate max-w-[220px]" title={u.email}>
+                          {u.email}
+                        </p>
+                        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+                          Masuk: {formatDateTime(u.last_login_at)}
+                        </p>
                       </td>
-                      <td className="py-2.5 pr-3">
-                        <span
-                          className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${
-                            u.role === 'admin'
-                              ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300'
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                          }`}
-                        >
-                          {u.role === 'admin' ? 'Admin' : 'Pengguna'}
-                        </span>
+                      <td className="py-2.5 pr-3 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                              u.role === 'admin'
+                                ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                            }`}
+                          >
+                            {u.role === 'admin' ? 'Admin' : 'Pengguna'}
+                          </span>
+                          <span
+                            className={`text-[11px] font-medium ${
+                              u.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                            }`}
+                          >
+                            {u.is_active ? 'Aktif' : 'Nonaktif'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5">{formatNumber(u.active_sessions)} sesi aktif</p>
                       </td>
-                      <td className="py-2.5 pr-3">
-                        <span className={u.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
-                          {u.is_active ? 'Aktif' : 'Nonaktif'}
-                        </span>
-                        <p className="text-[11px] text-slate-400">{formatNumber(u.active_sessions)} sesi</p>
-                      </td>
-                      <td className="py-2.5 pr-3 text-slate-700 dark:text-slate-200">{formatNumber(u.today_tokens)}</td>
-                      <td className="py-2.5 pr-3 text-slate-700 dark:text-slate-200">
-                        {u.role === 'admin'
-                          ? 'Tanpa Batas'
-                          : u.daily_token_budget === null
-                          ? 'Bawaan Sistem'
-                          : u.daily_token_budget === 0
-                          ? 'Tanpa Batas'
-                          : formatNumber(u.daily_token_budget)}
+                      <td className="py-2.5 pr-3 whitespace-nowrap">
+                        <p className="font-medium text-slate-800 dark:text-slate-200">
+                          {formatNumber(u.today_tokens)} <span className="font-normal text-slate-400">hari ini</span>
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">Kuota: {quotaLabel}</p>
                       </td>
                       <td className="py-2.5 pr-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                        {formatNumber(u.character_count)} karakter
-                        <br />
-                        {formatNumber(u.chat_count)} chat
+                        <p>{formatNumber(u.character_count)} karakter</p>
+                        <p className="text-[11px] text-slate-400">{formatNumber(u.chat_count)} chat</p>
                       </td>
-                      <td className="py-2.5 pr-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                        {formatDateTime(u.last_login_at)}
-                      </td>
-                      <td className="py-2.5">
+                      <td className="py-2.5 whitespace-nowrap">
                         <div className="flex justify-end gap-1">
                           <IconButton title="Ubah Akun" onClick={() => openDialog({ kind: 'edit', user: u })}>
                             <Pencil className="w-3.5 h-3.5" />

@@ -17,6 +17,8 @@ export function formatCharacterRow(
     world_name?: string | null;
     creator_name?: string;
     is_owner?: boolean;
+    bookmark_count?: number;
+    bookmarked?: boolean;
   }
 ) {
   return {
@@ -43,10 +45,13 @@ export function formatCharacterRow(
     is_favorite: Boolean(row.is_favorite),
     temperature_override: row.temperature_override,
     visibility: row.visibility === 'public' ? 'public' : 'private',
+    allow_remix: Boolean(row.allow_remix),
     published_at: row.published_at || null,
     // Nama pembuat ditampilkan di profil karakter; email tidak pernah diekspos
     creator_name: row.creator_name || '',
     is_owner: Boolean(row.is_owner),
+    bookmark_count: Number(row.bookmark_count || 0),
+    bookmarked: Boolean(row.bookmarked),
     chat_count: Number(row.chat_count || 0),
     last_chat_at: row.last_chat_at || null,
     created_at: row.created_at,

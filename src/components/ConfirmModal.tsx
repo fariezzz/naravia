@@ -29,19 +29,21 @@ export default function ConfirmModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-      <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+      <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md w-full p-6 shadow-xl">
         <div className="flex items-start gap-3.5">
           <div
             className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-              danger ? 'bg-rose-50 text-rose-600' : 'bg-indigo-50 text-indigo-600'
+              danger
+                ? 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400'
+                : 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400'
             }`}
           >
             <AlertTriangle className="w-5 h-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-            <p className="mt-1 text-sm text-slate-600 leading-relaxed">{description}</p>
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white">{title}</h3>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{description}</p>
           </div>
         </div>
 
@@ -50,7 +52,7 @@ export default function ConfirmModal({
             type="button"
             disabled={loading}
             onClick={onCancel}
-            className="h-9 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+            className="h-9 px-4 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           >
             {cancelLabel}
           </button>

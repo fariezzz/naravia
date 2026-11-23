@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { execute, MemoryRow, query, queryOne } from '@/lib/db';
-import { stripOwner } from '@/lib/format';
 import { handleApiError, HttpError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
-import { requireOwnedCharacter, requireOwnedChat, requireOwnedMessage } from '@/lib/store';
+import { sanitizeMemoryForClient, saveMemoryEmbedding } from '@/lib/memories';
+import { requireOwnedChat, requireOwnedMessage, requireVisibleCharacter } from '@/lib/store';
 
 export const runtime = 'nodejs';
 
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
           [user.id]
         );
 
-    return NextResponse.json({ memories: memories.map(stripOwner) });
+    return NextResponse.json({ memories: memories.map(sanitizeMemoryForClient) });
   } catch (err) {
     return handleApiError(err, 'Gagal memuat memori jangka panjang.');
   }
@@ -53,8 +53,10 @@ export async function POST(req: NextRequest) {
     if (!content) return jsonError('Isi memori tidak boleh kosong.', 400);
     if (content.length > MAX_MEMORY_LENGTH) return jsonError('Isi memori terlalu panjang.', 400);
 
-    // Semua referensi wajib milik pengguna sendiri
-    const characterId = body.characterId ? (await requireOwnedCharacter(user.id, String(body.characterId))).id : null;
+    // Karakter publik maupun milik sendiri boleh diberi memori pribadi oleh pengguna ini
+    const characterId = body.characterId
+      ? (await requireVisibleCharacter(user.id, String(body.characterId))).id
+      : null;
     const sourceChatId = body.sourceChatId ? (await requireOwnedChat(user.id, String(body.sourceChatId))).id : null;
     const sourceMessageId = body.sourceMessageId
       ? (await requireOwnedMessage(user.id, String(body.sourceMessageId))).id
@@ -77,8 +79,11 @@ export async function POST(req: NextRequest) {
     if (sourceMessageId) {
       await execute('UPDATE messages SET is_pinned_memory = 1 WHERE id = $1', [sourceMessageId]);
     }
+    if (created) {
+      saveMemoryEmbedding(created.id, content).catch(() => undefined);
+    }
 
-    return NextResponse.json({ memory: stripOwner(created!) }, { status: 201 });
+    return NextResponse.json({ memory: sanitizeMemoryForClient(created!) }, { status: 201 });
   } catch (err) {
     return handleApiError(err, 'Gagal menyimpan memori.');
   }
@@ -95,10 +100,13 @@ export async function PUT(req: NextRequest) {
 
     await requireOwnedMemory(user.id, id);
     const updated = await queryOne<MemoryRow>(
-      'UPDATE memories SET content = $1, type = $2 WHERE id = $3 AND user_id = $4 RETURNING *',
+      'UPDATE memories SET content = $1, type = $2, embedding = NULL WHERE id = $3 AND user_id = $4 RETURNING *',
       [content, body.type === 'preference' ? 'preference' : 'fact', id, user.id]
     );
-    return NextResponse.json({ memory: stripOwner(updated!) });
+    if (updated) {
+      saveMemoryEmbedding(updated.id, content).catch(() => undefined);
+    }
+    return NextResponse.json({ memory: sanitizeMemoryForClient(updated!) });
   } catch (err) {
     return handleApiError(err, 'Gagal memperbarui memori.');
   }

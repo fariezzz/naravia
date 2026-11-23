@@ -4,6 +4,7 @@ import { CharacterRow, ChatRow, execute, MessageRow, query, queryOne } from '@/l
 import { formatCharacterRow, formatMessageRow, stripOwner } from '@/lib/format';
 import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { generateLLMResponse } from '@/lib/llm';
+import { sanitizeMemoryForClient } from '@/lib/memories';
 import { enforceLlmRateLimit } from '@/lib/rateLimit';
 import {
   formatPersona,
@@ -25,6 +26,39 @@ export async function GET(req: NextRequest, context: Ctx) {
     const { id } = await context.params;
     const chat = await requireOwnedChat(user.id, id);
 
+    const url = new URL(req.url);
+    const limitParam = parseInt(url.searchParams.get('limit') || '60', 10);
+    const limit = Number.isFinite(limitParam) ? Math.max(10, Math.min(200, limitParam)) : 60;
+    const before = url.searchParams.get('before')?.trim() || '';
+    const messagesOnly = url.searchParams.get('messagesOnly') === '1';
+
+    const countRow = await queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM messages WHERE chat_id = $1', [id]);
+    const totalMessages = Number(countRow?.cnt || 0);
+
+    // Ambil N+1 pesan terbaru (atau sebelum cursor `before`) untuk menentukan apakah masih ada pesan lebih lama
+    const fetchedDesc = before
+      ? await query<MessageRow>(
+          `SELECT * FROM messages WHERE chat_id = $1 AND created_at < $2 ORDER BY created_at DESC LIMIT $3`,
+          [id, before, limit + 1]
+        )
+      : await query<MessageRow>(
+          `SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at DESC LIMIT $2`,
+          [id, limit + 1]
+        );
+
+    const hasMoreMessages = fetchedDesc.length > limit;
+    const pageRows = (hasMoreMessages ? fetchedDesc.slice(0, limit) : fetchedDesc).reverse();
+    const oldestCursor = pageRows[0]?.created_at || null;
+
+    if (messagesOnly) {
+      return NextResponse.json({
+        messages: pageRows.map(formatMessageRow),
+        totalMessages,
+        hasMoreMessages,
+        oldestCursor,
+      });
+    }
+
     // Definisi karakter diambil dari snapshot percakapan, bukan dari baris terbaru:
     // percakapan tetap bisa dibuka walau karakternya publik milik orang lain,
     // sudah disunting pemiliknya, atau sudah dihapus.
@@ -44,8 +78,7 @@ export async function GET(req: NextRequest, context: Ctx) {
       character = { ...character, world_name: world?.name || null };
     }
 
-    const [rawMessages, memories, otherChats, personas, settings] = await Promise.all([
-      query<MessageRow>('SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC', [id]),
+    const [memories, otherChats, personas, settings] = await Promise.all([
       query(
         `SELECT * FROM memories WHERE user_id = $2 AND (character_id = $1 OR character_id IS NULL)
          ORDER BY created_at DESC`,
@@ -77,8 +110,11 @@ export async function GET(req: NextRequest, context: Ctx) {
       character: formatCharacterRow(character),
       // Klien memakai ini untuk menonaktifkan kolom pesan pada percakapan yang karakternya sudah dihapus
       characterDeleted,
-      messages: rawMessages.map(formatMessageRow),
-      memories: memories.map(stripOwner),
+      messages: pageRows.map(formatMessageRow),
+      totalMessages,
+      hasMoreMessages,
+      oldestCursor,
+      memories: memories.map(sanitizeMemoryForClient),
       otherChats,
       activePersona: formatPersona(activePersona),
       personas: personas.map(formatPersona),
@@ -108,11 +144,13 @@ export async function PATCH(req: NextRequest, context: Ctx) {
         return jsonError('Percakapan masih terlalu singkat untuk diringkas (minimal 4 pesan).', 400);
       }
 
-      const character = await queryOne<{ name: string }>(
-        'SELECT name FROM characters WHERE id = $1 AND user_id = $2',
-        [existing.character_id, user.id]
-      );
-      const charName = character?.name || 'Karakter';
+      let charName = 'Karakter';
+      try {
+        const resolved = await resolveChatCharacter(existing);
+        charName = resolved.character.name || 'Karakter';
+      } catch {
+        // Fallback ke nama generik jika snapshot dan karakter keduanya tidak tersedia
+      }
       const transcript = msgs
         .map((m) => `${m.role === 'character' ? charName : 'Pengguna'}: ${m.content}`)
         .join('\n\n')

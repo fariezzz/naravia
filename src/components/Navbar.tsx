@@ -3,18 +3,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Compass, Users, Globe, Globe2, Settings, Plus, Menu, X, ShieldCheck, LogOut } from 'lucide-react';
+import { Compass, Users, Globe, Globe2, Settings, Plus, Menu, X, ShieldCheck, LogOut, Sun, Moon } from 'lucide-react';
 import CharacterAvatar from './CharacterAvatar';
 import { useAuth } from '@/lib/AuthContext';
+import { useTheme } from '@/lib/ThemeContext';
 
 const AUTH_PAGES = ['/login', '/register'];
 
 export default function Navbar() {
   const pathname = usePathname();
   const { user, loading, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const isNewCharPage = pathname === '/characters/new';
 
   useEffect(() => {
     setMobileOpen(false);
@@ -122,13 +125,15 @@ export default function Navbar() {
         </div>
 
         <div className="hidden md:flex items-center gap-2.5">
-          <Link
-            href="/characters/new"
-            className="h-[36px] px-3.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium inline-flex items-center gap-1.5 whitespace-nowrap transition-colors shadow-xs"
-          >
-            <Plus className="w-4 h-4 shrink-0" />
-            <span>Buat Karakter</span>
-          </Link>
+          {!isNewCharPage && (
+            <Link
+              href="/characters/new"
+              className="h-[36px] px-3.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium inline-flex items-center gap-1.5 whitespace-nowrap transition-colors shadow-xs"
+            >
+              <Plus className="w-4 h-4 shrink-0" />
+              <span>Buat Karakter</span>
+            </Link>
+          )}
 
           <div className="relative" ref={menuRef}>
             <button
@@ -153,6 +158,20 @@ export default function Navbar() {
                   <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">{displayName}</p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{user?.email}</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  className="w-full h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between gap-2"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    {theme === 'dark' ? (
+                      <Sun className="w-3.5 h-3.5 text-amber-400" />
+                    ) : (
+                      <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                    )}
+                    <span>{theme === 'dark' ? 'Beralih ke Mode Terang' : 'Beralih ke Mode Gelap'}</span>
+                  </span>
+                </button>
                 <Link
                   href="/settings"
                   className="h-8 px-2.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
@@ -183,13 +202,15 @@ export default function Navbar() {
         </div>
 
         <div className="flex md:hidden items-center gap-1.5">
-          <Link
-            href="/characters/new"
-            className="h-8 px-2.5 rounded-lg bg-indigo-600 text-white text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Buat Karakter</span>
-          </Link>
+          {!isNewCharPage && (
+            <Link
+              href="/characters/new"
+              className="h-8 px-2.5 rounded-lg bg-indigo-600 text-white text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Buat Karakter</span>
+            </Link>
+          )}
           <Link href="/settings" aria-label="Pengaturan Akun" className="rounded-full">
             <CharacterAvatar name={displayName} avatar={user?.avatar || ''} size="sm" />
           </Link>
@@ -225,6 +246,18 @@ export default function Navbar() {
                 </Link>
               );
             })}
+            <button
+              type="button"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="h-9 px-3 rounded-lg text-xs font-medium inline-flex items-center gap-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4 text-amber-400 shrink-0" />
+              ) : (
+                <Moon className="w-4 h-4 text-indigo-500 shrink-0" />
+              )}
+              <span>{theme === 'dark' ? 'Beralih ke Mode Terang' : 'Beralih ke Mode Gelap'}</span>
+            </button>
             <button
               type="button"
               onClick={() => logout()}

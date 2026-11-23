@@ -171,17 +171,19 @@ export default function AdminOverview() {
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Waktu</th>
-                <th className="py-2 pr-3 font-semibold">Aksi</th>
+                <th className="py-2 pr-3 font-semibold whitespace-nowrap">Waktu</th>
+                <th className="py-2 pr-3 font-semibold whitespace-nowrap">Aksi</th>
                 <th className="py-2 pr-3 font-semibold">Akun</th>
                 <th className="py-2 pr-3 font-semibold">Detail</th>
-                <th className="py-2 font-semibold">IP</th>
+                <th className="py-2 font-semibold text-right whitespace-nowrap">IP</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {audit.map((row: any) => (
                 <tr key={row.id}>
-                  <td className="py-2 pr-3 whitespace-nowrap text-slate-500 dark:text-slate-400">{formatDateTime(row.created_at)}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap text-[11px] text-slate-500 dark:text-slate-400">
+                    {formatDateTime(row.created_at)}
+                  </td>
                   <td
                     className={`py-2 pr-3 whitespace-nowrap font-medium ${
                       row.action.includes('gagal') || row.action.includes('ditolak')
@@ -191,11 +193,15 @@ export default function AdminOverview() {
                   >
                     {ACTION_LABELS[row.action] || row.action}
                   </td>
-                  <td className="py-2 pr-3 text-slate-600 dark:text-slate-300">{row.actor_email || '-'}</td>
-                  <td className="py-2 pr-3 text-slate-500 dark:text-slate-400 max-w-[280px] truncate" title={row.detail}>
+                  <td className="py-2 pr-3 text-slate-600 dark:text-slate-300 max-w-[160px] truncate" title={row.actor_email || ''}>
+                    {row.actor_email || '-'}
+                  </td>
+                  <td className="py-2 pr-3 text-slate-500 dark:text-slate-400 max-w-[200px] truncate" title={row.detail}>
                     {row.detail || '-'}
                   </td>
-                  <td className="py-2 font-mono text-slate-400">{row.ip || '-'}</td>
+                  <td className="py-2 font-mono text-[11px] text-slate-400 text-right whitespace-nowrap">
+                    {row.ip || '-'}
+                  </td>
                 </tr>
               ))}
             </tbody>

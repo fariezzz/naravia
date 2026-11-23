@@ -27,19 +27,31 @@ export async function GET(req: NextRequest, context: Ctx) {
 
     const character = await requireVisibleCharacter(user?.id || null, id);
 
-    // Jumlah percakapan yang ditampilkan hanya milik pemanggil sendiri
-    const stats = user
-      ? await queryOne<{ chat_count: number; last_chat_at: string | null }>(
-          `SELECT COUNT(*) AS chat_count, MAX(updated_at) AS last_chat_at
-           FROM chats WHERE character_id = $1 AND user_id = $2`,
-          [id, user.id]
-        )
-      : null;
+    // Jumlah percakapan milik pemanggil + statistik bookmark karakter
+    const [stats, bookmarkStats] = await Promise.all([
+      user
+        ? queryOne<{ chat_count: number; last_chat_at: string | null }>(
+            `SELECT COUNT(*) AS chat_count, MAX(updated_at) AS last_chat_at
+             FROM chats WHERE character_id = $1 AND user_id = $2`,
+            [id, user.id]
+          )
+        : Promise.resolve(null),
+      queryOne<{ cnt: number; bookmarked: boolean }>(
+        `SELECT
+           COUNT(*) AS cnt,
+           EXISTS (SELECT 1 FROM character_bookmarks WHERE character_id = $1 AND user_id = $2) AS bookmarked
+         FROM character_bookmarks
+         WHERE character_id = $1`,
+        [id, user?.id || null]
+      ),
+    ]);
 
     const enriched = {
       ...character,
       chat_count: Number(stats?.chat_count || 0),
       last_chat_at: stats?.last_chat_at || null,
+      bookmark_count: Number(bookmarkStats?.cnt || 0),
+      bookmarked: Boolean(bookmarkStats?.bookmarked),
     };
 
     // Riwayat percakapan dan memori bersifat pribadi, bahkan pada karakter publik
@@ -120,13 +132,15 @@ export async function PUT(req: NextRequest, context: Ctx) {
 
     const visibility =
       body.visibility !== undefined ? normalizeVisibility(body.visibility) : existing.visibility;
+    const allowRemix =
+      body.allow_remix !== undefined ? (body.allow_remix ? 1 : 0) : existing.allow_remix ? 1 : 0;
 
     const updated = await queryOne<CharacterRow>(
       `UPDATE characters SET
          name = $1, tagline = $2, avatar = $3, description = $4, personality = $5,
          speaking_style = $6, scenario = $7, greeting = $8, example_dialogues = $9, tags = $10,
          research_notes = $11, world_id = $12, is_pinned = $13, is_favorite = $14,
-         temperature_override = $15, visibility = $18,
+         temperature_override = $15, visibility = $18, allow_remix = $19,
          -- Waktu terbit hanya dicatat sekali, saat karakter pertama kali dibuat publik
          published_at = CASE
            WHEN $18 = 'public' THEN COALESCE(published_at, now())
@@ -156,6 +170,7 @@ export async function PUT(req: NextRequest, context: Ctx) {
         id,
         user.id,
         visibility,
+        allowRemix,
       ]
     );
 

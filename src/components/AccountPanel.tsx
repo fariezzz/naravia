@@ -1,9 +1,19 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle2, KeyRound, LogOut, MonitorSmartphone, Save } from 'lucide-react';
+import { AlertCircle, CheckCircle2, KeyRound, Laptop, LogOut, MonitorSmartphone, Save, Smartphone, Trash2 } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import { useAuth } from '@/lib/AuthContext';
+
+interface SessionItem {
+  id: string;
+  user_agent: string;
+  ip: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  is_current: boolean;
+}
 
 interface AccountInfo {
   email: string;
@@ -12,6 +22,33 @@ interface AccountInfo {
   created_at: string | null;
   last_login_at: string | null;
   active_sessions: number;
+  sessions?: SessionItem[];
+}
+
+function summarizeUserAgent(ua: string): { label: string; isMobile: boolean } {
+  const lower = (ua || '').toLowerCase();
+  const isMobile = /mobile|android|iphone|ipad/.test(lower);
+  const browser = lower.includes('edg/')
+    ? 'Edge'
+    : lower.includes('chrome/') && !lower.includes('chromium')
+    ? 'Chrome'
+    : lower.includes('firefox/')
+    ? 'Firefox'
+    : lower.includes('safari/') && !lower.includes('chrome')
+    ? 'Safari'
+    : 'Browser';
+  const os = lower.includes('windows')
+    ? 'Windows'
+    : lower.includes('android')
+    ? 'Android'
+    : lower.includes('iphone') || lower.includes('ipad')
+    ? 'iOS'
+    : lower.includes('mac os')
+    ? 'macOS'
+    : lower.includes('linux')
+    ? 'Linux'
+    : 'Perangkat lain';
+  return { label: `${browser} di ${os}`, isMobile };
 }
 
 function formatDate(value: string | null) {
@@ -105,6 +142,19 @@ export default function AccountPanel() {
     if (data) load();
   };
 
+  const handleRevokeSession = async (sessionId: string) => {
+    const data = await post(
+      `revoke_${sessionId}`,
+      { action: 'revoke_session', session_id: sessionId },
+      'Sesi perangkat telah dicabut.'
+    );
+    if (data?.revokedSelf) {
+      await logout(false);
+    } else if (data) {
+      load();
+    }
+  };
+
   const handleLogoutAll = async () => {
     setLogoutAllOpen(false);
     const data = await post('all', { action: 'logout_all' }, '');
@@ -158,11 +208,11 @@ export default function AccountPanel() {
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
             Terdaftar {formatDate(account?.created_at || null)} - Terakhir masuk {formatDate(account?.last_login_at || null)}
           </p>
-          <button
-            type="submit"
-            disabled={busy !== null || !displayName.trim()}
-            className="h-9 px-4 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60 shrink-0"
-          >
+            <button
+              type="submit"
+              disabled={busy !== null || !displayName.trim()}
+              className="h-9 px-4 rounded-xl bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60 shrink-0 transition-colors"
+            >
             <Save className="w-3.5 h-3.5" />
             <span>{busy === 'profile' ? 'Menyimpan...' : 'Simpan Nama'}</span>
           </button>
@@ -211,7 +261,7 @@ export default function AccountPanel() {
           <button
             type="submit"
             disabled={busy !== null || !currentPassword || !newPassword}
-            className="h-9 px-4 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60"
+            className="h-9 px-4 rounded-xl bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-600 dark:hover:bg-indigo-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60 transition-colors"
           >
             <KeyRound className="w-3.5 h-3.5" />
             <span>{busy === 'password' ? 'Mengganti...' : 'Ganti Kata Sandi'}</span>
@@ -219,13 +269,55 @@ export default function AccountPanel() {
         </div>
       </form>
 
-      <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-3 shadow-2xs">
+      <div className="bg-white dark:bg-[#0f1729] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xs">
         <div>
           <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Sesi Perangkat</h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             {account ? `${account.active_sessions} sesi aktif, termasuk perangkat ini.` : 'Memuat...'}
           </p>
         </div>
+        {account?.sessions && account.sessions.length > 0 && (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            {account.sessions.map((s) => {
+              const info = summarizeUserAgent(s.user_agent);
+              const Icon = info.isMobile ? Smartphone : Laptop;
+              return (
+                <div
+                  key={s.id}
+                  className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50/50 dark:bg-slate-900/40"
+                >
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <Icon className="w-4 h-4 text-slate-400 dark:text-slate-500 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{info.label}</span>
+                        {s.is_current && (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold">
+                            Perangkat ini
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        IP: {s.ip || '-'} · Aktif terakhir {formatDate(s.last_seen_at)}
+                      </p>
+                    </div>
+                  </div>
+                  {!s.is_current && (
+                    <button
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={() => handleRevokeSession(s.id)}
+                      className="self-end sm:self-center h-7 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-600 dark:hover:text-rose-400 text-[11px] font-medium text-slate-600 dark:text-slate-300 inline-flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>{busy === `revoke_${s.id}` ? 'Mencabut...' : 'Cabut'}</span>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row gap-2">
           <button
             type="button"

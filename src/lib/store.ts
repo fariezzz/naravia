@@ -12,10 +12,11 @@ import {
   UserPersonaRow,
   WorldRow,
 } from './db';
+import { decryptSecret, encryptSecret } from './crypto';
 import { parseJsonSafe } from './format';
 import { HttpError } from './http';
 import { newId } from './ids';
-import { SYSTEM_SETTING_KEYS, USER_SETTING_DEFAULTS } from './settingsKeys';
+import { SECRET_SETTING_KEYS, SYSTEM_SETTING_KEYS, USER_SETTING_DEFAULTS } from './settingsKeys';
 
 // ===================== Setelan =====================
 
@@ -28,7 +29,9 @@ export async function getSystemSettings(): Promise<Record<string, string>> {
   }
   const rows = await query<{ key: string; value: string }>('SELECT key, value FROM system_settings');
   const map: Record<string, string> = {};
-  for (const r of rows) map[r.key] = r.value;
+  for (const r of rows) {
+    map[r.key] = SECRET_SETTING_KEYS.has(r.key) ? decryptSecret(r.value) : r.value;
+  }
   _systemSettingsCache = { data: map, at: Date.now() };
   return map;
 }
@@ -37,10 +40,12 @@ export async function updateSystemSettings(updates: Record<string, string>): Pro
   const allowed = new Set<string>(SYSTEM_SETTING_KEYS);
   for (const [k, v] of Object.entries(updates)) {
     if (!allowed.has(k) || v === undefined || v === null) continue;
+    const rawVal = String(v);
+    const storedVal = SECRET_SETTING_KEYS.has(k) && rawVal ? encryptSecret(rawVal) : rawVal;
     await execute(
       `INSERT INTO system_settings (key, value) VALUES ($1, $2)
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [k, String(v)]
+      [k, storedVal]
     );
   }
   _systemSettingsCache = null;

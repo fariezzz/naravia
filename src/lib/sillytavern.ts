@@ -222,3 +222,186 @@ export function extractCharacterJsonFromPng(buffer: Buffer): Record<string, any>
 
   throw new Error('Gambar PNG ini tidak mengandung metadata kartu karakter SillyTavern (chunk "chara" tidak ditemukan).');
 }
+
+// ===================== Ekspor Kartu SillyTavern V2 =====================
+
+export interface ExportableCharacter {
+  name: string;
+  tagline?: string;
+  description?: string;
+  personality?: string;
+  speaking_style?: string;
+  scenario?: string;
+  greeting?: string[] | string;
+  example_dialogues?: Array<{ user: string; char: string }> | string;
+  tags?: string[] | string;
+  creator_name?: string;
+}
+
+function toArray<T>(val: T[] | string | undefined): T[] {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string' && val.trim()) {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  return [];
+}
+
+export function buildSillyTavernCardV2(character: ExportableCharacter) {
+  const greetings = toArray<string>(character.greeting).map((g) => String(g || '').trim()).filter(Boolean);
+  const examples = toArray<{ user?: string; char?: string }>(character.example_dialogues);
+  const tags = toArray<string>(character.tags).map((t) => String(t || '').trim()).filter(Boolean);
+
+  const mesExample = examples
+    .filter((d) => d?.user || d?.char)
+    .map((d) => `<START>\n{{user}}: ${String(d.user || '').trim()}\n{{char}}: ${String(d.char || '').trim()}`)
+    .join('\n');
+
+  return {
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: {
+      name: character.name,
+      description: character.description || '',
+      personality: character.personality || '',
+      scenario: character.scenario || '',
+      first_mes: greetings[0] || `Halo {{user}}, senang bertemu denganmu.`,
+      alternate_greetings: greetings.slice(1),
+      mes_example: mesExample,
+      creator_notes: character.tagline || '',
+      system_prompt: character.speaking_style || '',
+      post_history_instructions: '',
+      tags,
+      creator: character.creator_name || 'Naravia',
+      character_version: '1.0',
+      extensions: {
+        naravia: {
+          tagline: character.tagline || '',
+          speaking_style: character.speaking_style || '',
+        },
+      },
+    },
+  };
+}
+
+// Tabel CRC-32 standar PNG (IEEE 802.3)
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    c = CRC32_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function makePngChunk(type: string, data: Buffer): Buffer {
+  const typeBuf = Buffer.from(type, 'ascii');
+  const lenBuf = Buffer.alloc(4);
+  lenBuf.writeUInt32BE(data.length, 0);
+  const crcInput = Buffer.concat([typeBuf, data]);
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE(crc32(crcInput), 0);
+  return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
+}
+
+/**
+ * Menghasilkan gambar PNG polos 128x128 bernuansa indigo sebagai kanvas cadangan
+ * bila avatar karakter belum berformat PNG.
+ */
+export function createFallbackCardPng(): Buffer {
+  const width = 128;
+  const height = 128;
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // RGB
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  const rawRows = Buffer.alloc((width * 3 + 1) * height);
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * (width * 3 + 1);
+    rawRows[rowStart] = 0; // filter None
+    for (let x = 0; x < width; x++) {
+      const px = rowStart + 1 + x * 3;
+      const t = (x + y) / (width + height);
+      rawRows[px] = Math.round(49 + t * 50); // R
+      rawRows[px + 1] = Math.round(46 + t * 56); // G
+      rawRows[px + 2] = Math.round(129 + t * 90); // B
+    }
+  }
+
+  const idat = zlib.deflateSync(rawRows);
+  return Buffer.concat([sig, makePngChunk('IHDR', ihdr), makePngChunk('IDAT', idat), makePngChunk('IEND', Buffer.alloc(0))]);
+}
+
+/**
+ * Menyematkan payload JSON SillyTavern V2 (base64) ke dalam chunk tEXt `chara` file PNG.
+ */
+export function embedCharacterJsonInPng(pngBuffer: Buffer, cardJson: Record<string, any>): Buffer {
+  const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (pngBuffer.length < 8 || !pngBuffer.subarray(0, 8).equals(PNG_SIGNATURE)) {
+    throw new Error('Buffer bukan PNG yang valid.');
+  }
+
+  const base64Payload = Buffer.from(JSON.stringify(cardJson), 'utf8').toString('base64');
+  const charaChunk = makePngChunk('tEXt', Buffer.concat([Buffer.from('chara\0', 'latin1'), Buffer.from(base64Payload, 'latin1')]));
+
+  const chunks: Buffer[] = [PNG_SIGNATURE];
+  let inserted = false;
+  let offset = 8;
+
+  while (offset + 8 <= pngBuffer.length) {
+    const length = pngBuffer.readUInt32BE(offset);
+    const type = pngBuffer.subarray(offset + 4, offset + 8).toString('ascii');
+    const chunkTotalEnd = offset + 12 + length;
+    if (chunkTotalEnd > pngBuffer.length) break;
+
+    const rawChunk = pngBuffer.subarray(offset, chunkTotalEnd);
+
+    // Lewati chunk chara/ccv3 lama agar tidak ganda
+    if (type === 'tEXt' || type === 'zTXt' || type === 'iTXt') {
+      const data = pngBuffer.subarray(offset + 8, offset + 8 + length);
+      const nullIdx = data.indexOf(0);
+      if (nullIdx !== -1) {
+        const kw = data.subarray(0, nullIdx).toString('latin1').toLowerCase();
+        if (kw === 'chara' || kw === 'ccv3') {
+          offset = chunkTotalEnd;
+          continue;
+        }
+      }
+    }
+
+    if (type === 'IEND' && !inserted) {
+      chunks.push(charaChunk);
+      inserted = true;
+    }
+    chunks.push(rawChunk);
+    offset = chunkTotalEnd;
+    if (type === 'IEND') break;
+  }
+
+  if (!inserted) {
+    chunks.push(charaChunk);
+    chunks.push(makePngChunk('IEND', Buffer.alloc(0)));
+  }
+
+  return Buffer.concat(chunks);
+}

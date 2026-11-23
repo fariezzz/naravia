@@ -1,6 +1,7 @@
 import { Pool, PoolClient, QueryResultRow, types } from 'pg';
+import { encryptSecret } from './crypto';
 import { MIGRATIONS_SQL, SCHEMA_SQL } from './schema.mjs';
-import { systemDefaultsFromEnv } from './settingsKeys';
+import { SECRET_SETTING_KEYS, systemDefaultsFromEnv } from './settingsKeys';
 import { insertUserRecords } from './userRecords';
 
 // Kembalikan TIMESTAMPTZ sebagai string ISO (frontend mengandalkan string, bukan objek Date)
@@ -42,6 +43,7 @@ export interface CharacterRow {
   is_favorite: number;
   temperature_override: number | null;
   visibility: 'private' | 'public';
+  allow_remix?: number;
   published_at: string | null;
   created_at: string;
   updated_at: string;
@@ -87,6 +89,7 @@ export interface MemoryRow {
   source_chat_id: string | null;
   source_message_id: string | null;
   is_auto: number;
+  embedding?: string | null;
   created_at: string;
 }
 
@@ -232,9 +235,10 @@ async function initializeDatabase(): Promise<void> {
 
     const defaults = systemDefaultsFromEnv();
     for (const [k, v] of Object.entries(defaults)) {
+      const stored = SECRET_SETTING_KEYS.has(k) && v ? encryptSecret(v) : v;
       await client.query(
         'INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
-        [k, v]
+        [k, stored]
       );
     }
 
