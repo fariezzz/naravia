@@ -3,6 +3,60 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
+export function countWords(text: string): number {
+  const cleaned = (text || '').trim();
+  if (!cleaned) return 0;
+  return cleaned.split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Pembersih minimal untuk mode `raw` (JSON brainstorm, ide plot, analisis struktur):
+ * hanya menghapus blok <think> dan sisa tag pemanggilan tool tanpa memotong isi.
+ */
+export function cleanRawOutput(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/<tool_call>|<\/tool_call>/gi, '')
+    .replace(/<function_call>[\s\S]*?<\/function_call>/gi, '')
+    .replace(/<function_call>|<\/function_call>/gi, '')
+    .replace(/<call:[\s\S]*?>[\s\S]*?<\/call:[\s\S]*?>/gi, '')
+    .trim();
+}
+
+/**
+ * Pembersih khusus prosa novel/cerita:
+ * - Menghapus blok berpikir internal (<think>) dan kebocoran tool call.
+ * - Menghapus kalimat basa-basi pembuka ala asisten ("Tentu, berikut kelanjutannya:", dsb.).
+ * - TIDAK memotong baris bertitik dua (misal isi surat/catatan di dalam novel) maupun pemisah adegan `---`.
+ */
+export function cleanStoryOutput(raw: string): string {
+  if (!raw) return '';
+  let text = cleanRawOutput(raw);
+
+  // Hapus pembungkus markdown code block jika model tidak sengaja membungkus prosa
+  const fenced = text.match(/^```(?:markdown|md|text)?\s*\n([\s\S]*?)\n```$/i);
+  if (fenced) {
+    text = fenced[1].trim();
+  }
+
+  // Buang baris pembuka basa-basi asisten pada baris pertama
+  const preamblePatterns = [
+    /^(?:tentu|baik|siap|oke|berikut(?:\s+ini)?|ini\s+adalah|inilah)[^.\n]{0,90}(?:kelanjutan|lanjutan|cerita|prosa|paragraf|adegan|versi|revisi|tulisan)[^.\n]{0,60}:\s*\n+/i,
+    /^(?:sure|certainly|here(?:'s|\s+is))[^.\n]{0,90}(?:continuation|story|prose|scene|revision|rewrite)[^.\n]{0,60}:\s*\n+/i,
+    /^\*{0,2}(?:kelanjutan\s+cerita|lanjutan\s+cerita|hasil\s+revisi)\*{0,2}\s*:\s*\n+/i,
+  ];
+  for (const rx of preamblePatterns) {
+    text = text.replace(rx, '').trimStart();
+  }
+
+  // Rapikan baris kosong berlebihan (> 2 baris kosong berurutan)
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  return text.trim();
+}
+
 export function cleanCharacterOutput(raw: string, characterName?: string): string {
   if (!raw) return '';
   let text = raw.trim();

@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
            (SELECT COUNT(*) FROM chats) AS chats,
            (SELECT COUNT(*) FROM messages) AS messages,
            (SELECT COUNT(*) FROM group_chats) AS group_chats,
+           (SELECT COUNT(*) FROM stories) AS stories,
+           (SELECT COUNT(*) FROM story_chapters) AS story_chapters,
            (SELECT COUNT(*) FROM uploads) AS uploads,
            (SELECT COALESCE(SUM(size_bytes), 0) FROM uploads) AS upload_bytes`
       ),

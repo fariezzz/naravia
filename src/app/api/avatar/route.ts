@@ -43,7 +43,13 @@ export async function POST(req: NextRequest) {
       const ext = detectImageExt(buffer);
       if (!ext) return jsonError('Format gambar harus WEBP, PNG, atau JPG.', 400);
 
-      const prefix = file.name.toLowerCase().startsWith('persona-') ? 'persona' : 'avatar';
+      const aspect = String(formData.get('aspect') || '').toLowerCase();
+      const prefix =
+        aspect === 'cover'
+          ? 'cover'
+          : file.name.toLowerCase().startsWith('persona-')
+            ? 'persona'
+            : 'avatar';
       const filename = `${newId(prefix)}${ext}`;
       fs.writeFileSync(path.join(ensureUploadsDir(), filename), buffer);
       await registerUpload(filename, user.id, buffer.length);
@@ -54,7 +60,8 @@ export async function POST(req: NextRequest) {
         await deleteUploadAsset(previousAvatarUrl, user.id);
       }
 
-      return NextResponse.json({ avatarUrl: `/uploads/${filename}` });
+      const publicUrl = `/uploads/${filename}`;
+      return NextResponse.json({ avatarUrl: publicUrl, url: publicUrl });
     }
 
     // 2. Generator avatar ilustrasi SVG dari inisial nama (dibuat server, isi aman)

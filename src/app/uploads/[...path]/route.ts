@@ -24,9 +24,12 @@ const MIME_MAP: Record<string, string> = {
 async function resolveAccess(filename: string, userId: string | null): Promise<'publik' | 'pribadi' | null> {
   const url = `/uploads/${filename}`;
 
-  // Avatar yang dipakai karakter publik terbuka untuk siapa pun
+  // Avatar karakter publik atau sampul cerita publik terbuka untuk siapa pun
   const publik = await queryOne<{ cnt: number }>(
-    `SELECT COUNT(*) AS cnt FROM characters WHERE avatar = $1 AND visibility = 'public'`,
+    `SELECT (
+       (SELECT COUNT(*) FROM characters WHERE avatar = $1 AND visibility = 'public') +
+       (SELECT COUNT(*) FROM stories WHERE cover_image = $1 AND visibility = 'public')
+     ) AS cnt`,
     [url]
   );
   if (Number(publik?.cnt || 0) > 0) return 'publik';
@@ -34,14 +37,16 @@ async function resolveAccess(filename: string, userId: string | null): Promise<'
   if (!userId) return null;
 
   // Selain itu, hanya pemilik file, pemilik entitas yang memakainya,
-  // atau pemilik percakapan yang menyimpan snapshot karakter dengan avatar tersebut
+  // atau pemilik percakapan/cerita yang menyimpan snapshot dengan avatar tersebut
   const quotedUrl = JSON.stringify(url);
   const milik = await queryOne<{ cnt: number }>(
     `SELECT (
        (SELECT COUNT(*) FROM uploads WHERE filename = $1 AND user_id = $2) +
        (SELECT COUNT(*) FROM characters WHERE avatar = $3 AND user_id = $2) +
        (SELECT COUNT(*) FROM user_personas WHERE avatar = $3 AND user_id = $2) +
-       (SELECT COUNT(*) FROM chats WHERE user_id = $2 AND character_snapshot IS NOT NULL AND POSITION($4 IN character_snapshot) > 0)
+       (SELECT COUNT(*) FROM stories WHERE cover_image = $3 AND user_id = $2) +
+       (SELECT COUNT(*) FROM chats WHERE user_id = $2 AND character_snapshot IS NOT NULL AND POSITION($4 IN character_snapshot) > 0) +
+       (SELECT COUNT(*) FROM story_cast sc JOIN stories s ON s.id = sc.story_id WHERE s.user_id = $2 AND sc.character_snapshot IS NOT NULL AND POSITION($4 IN sc.character_snapshot) > 0)
      ) AS cnt`,
     [filename, userId, url, quotedUrl]
   );

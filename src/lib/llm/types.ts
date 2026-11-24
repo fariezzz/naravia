@@ -11,7 +11,14 @@ export type LLMActionType =
   | 'memory'
   | 'group_chat'
   | 'preview'
-  | 'title';
+  | 'title'
+  | 'story_write'
+  | 'story_outline'
+  | 'story_rewrite'
+  | 'story_summary'
+  | 'story_adapt';
+
+export type LLMOutputMode = 'character' | 'story' | 'raw';
 
 export type LLMProtocol = 'openai_compatible' | 'google' | 'ollama_native';
 
@@ -22,7 +29,9 @@ export interface LLMCallOptions {
   maxTokens?: number;
   characterId?: string | null;
   chatId?: string | null;
+  storyId?: string | null;
   actionType?: LLMActionType;
+  outputMode?: LLMOutputMode;
   jsonMode?: boolean;
   timeoutMs?: number;
 }

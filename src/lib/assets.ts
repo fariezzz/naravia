@@ -109,7 +109,9 @@ async function isUploadReferenced(url: string): Promise<boolean> {
     `SELECT (
        (SELECT COUNT(*) FROM characters WHERE avatar = $1) +
        (SELECT COUNT(*) FROM user_personas WHERE avatar = $1) +
-       (SELECT COUNT(*) FROM chats WHERE character_snapshot IS NOT NULL AND POSITION($2 IN character_snapshot) > 0)
+       (SELECT COUNT(*) FROM stories WHERE cover_image = $1) +
+       (SELECT COUNT(*) FROM chats WHERE character_snapshot IS NOT NULL AND POSITION($2 IN character_snapshot) > 0) +
+       (SELECT COUNT(*) FROM story_cast WHERE character_snapshot IS NOT NULL AND POSITION($2 IN character_snapshot) > 0)
      ) AS cnt`,
     [url, quotedUrl]
   );
@@ -174,7 +176,8 @@ export async function cleanupOrphanedUploads(userId?: string): Promise<number> {
   try {
     const active = await query<{ avatar: string }>(
       `SELECT avatar FROM characters WHERE avatar LIKE '/uploads/%'
-       UNION SELECT avatar FROM user_personas WHERE avatar LIKE '/uploads/%'`
+       UNION SELECT avatar FROM user_personas WHERE avatar LIKE '/uploads/%'
+       UNION SELECT cover_image AS avatar FROM stories WHERE cover_image LIKE '/uploads/%'`
     );
     const activeSet = new Set(active.map((r) => r.avatar.trim()));
 
@@ -193,9 +196,12 @@ export async function cleanupOrphanedUploads(userId?: string): Promise<number> {
     for (const file of candidates) {
       const url = `/uploads/${file}`;
       if (activeSet.has(url)) continue;
-      // Pastikan juga tidak sedang dipakai di arsip snapshot percakapan
+      // Pastikan juga tidak sedang dipakai di arsip snapshot percakapan atau pemeran cerita
       const snapRef = await queryOne<{ cnt: number }>(
-        `SELECT COUNT(*) AS cnt FROM chats WHERE character_snapshot IS NOT NULL AND POSITION($1 IN character_snapshot) > 0`,
+        `SELECT (
+           (SELECT COUNT(*) FROM chats WHERE character_snapshot IS NOT NULL AND POSITION($1 IN character_snapshot) > 0) +
+           (SELECT COUNT(*) FROM story_cast WHERE character_snapshot IS NOT NULL AND POSITION($1 IN character_snapshot) > 0)
+         ) AS cnt`,
         [JSON.stringify(url)]
       );
       if (Number(snapRef?.cnt || 0) > 0) continue;

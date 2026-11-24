@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
 
-    const [totals, today, budget, byCharacter, byChat] = await Promise.all([
+    const [totals, today, budget, byCharacter, byChat, byStory] = await Promise.all([
       queryOne<{ total_in: number; total_out: number; total_calls: number }>(
         `SELECT COALESCE(SUM(tokens_in), 0) AS total_in, COALESCE(SUM(tokens_out), 0) AS total_out, COUNT(*) AS total_calls
          FROM token_usage WHERE user_id = $1`,
@@ -45,6 +45,19 @@ export async function GET(req: NextRequest) {
          LIMIT 15`,
         [user.id]
       ),
+      query(
+        `SELECT s.id AS story_id, s.title AS story_title,
+           COALESCE(SUM(t.tokens_in), 0) AS tokens_in,
+           COALESCE(SUM(t.tokens_out), 0) AS tokens_out,
+           COUNT(t.id) AS call_count
+         FROM stories s
+         LEFT JOIN token_usage t ON t.story_id = s.id AND t.user_id = $1
+         WHERE s.user_id = $1
+         GROUP BY s.id, s.title
+         ORDER BY COALESCE(SUM(t.tokens_in), 0) + COALESCE(SUM(t.tokens_out), 0) DESC
+         LIMIT 15`,
+        [user.id]
+      ),
     ]);
 
     const totalIn = Number(totals?.total_in || 0);
@@ -64,6 +77,7 @@ export async function GET(req: NextRequest) {
       },
       byCharacter,
       byChat,
+      byStory,
     });
   } catch (err) {
     return handleApiError(err, 'Gagal memuat statistik pemakaian token.');

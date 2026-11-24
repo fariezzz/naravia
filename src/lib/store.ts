@@ -9,6 +9,7 @@ import {
   MessageRow,
   query,
   queryOne,
+  StoryRow,
   UserPersonaRow,
   WorldRow,
 } from './db';
@@ -84,18 +85,20 @@ export async function recordTokenUsage(params: {
   userId: string;
   characterId?: string | null;
   chatId?: string | null;
+  storyId?: string | null;
   actionType?: string;
   tokensIn: number;
   tokensOut: number;
 }) {
   await execute(
-    `INSERT INTO token_usage (id, user_id, character_id, chat_id, action_type, tokens_in, tokens_out)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    `INSERT INTO token_usage (id, user_id, character_id, chat_id, story_id, action_type, tokens_in, tokens_out)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       newId('tok'),
       params.userId,
       params.characterId || null,
       params.chatId || null,
+      params.storyId || null,
       params.actionType || 'chat',
       Math.max(0, Math.round(params.tokensIn || 0)),
       Math.max(0, Math.round(params.tokensOut || 0)),
@@ -316,6 +319,46 @@ export async function requireOwnedGroupChat(userId: string, id: string, client?:
     client
   );
   if (!row) throw new HttpError(404, 'Grup chat tidak ditemukan.');
+  return row;
+}
+
+export async function requireOwnedStory(userId: string, id: string, client?: PoolClient) {
+  const row = await queryOne<StoryRow>('SELECT * FROM stories WHERE id = $1 AND user_id = $2', [id, userId], client);
+  if (!row) throw new HttpError(404, 'Cerita tidak ditemukan.');
+  return row;
+}
+
+export type VisibleStory = StoryRow & {
+  creator_name: string;
+  world_name: string | null;
+  is_owner: boolean;
+};
+
+export async function getVisibleStory(
+  userId: string | null,
+  id: string,
+  client?: PoolClient
+): Promise<VisibleStory | null> {
+  const row = await queryOne<StoryRow & { creator_name: string; world_name: string | null }>(
+    `SELECT s.*, u.display_name AS creator_name, w.name AS world_name
+     FROM stories s
+     JOIN users u ON u.id = s.user_id
+     LEFT JOIN worlds w ON w.id = s.world_id
+     WHERE s.id = $1 AND (s.visibility = 'public' OR s.user_id = $2)`,
+    [id, userId],
+    client
+  );
+  if (!row) return null;
+  return { ...row, is_owner: Boolean(userId) && row.user_id === userId };
+}
+
+export async function requireVisibleStory(
+  userId: string | null,
+  id: string,
+  client?: PoolClient
+): Promise<VisibleStory> {
+  const row = await getVisibleStory(userId, id, client);
+  if (!row) throw new HttpError(404, 'Cerita tidak ditemukan.');
   return row;
 }
 

@@ -187,10 +187,77 @@ CREATE TABLE IF NOT EXISTS token_usage (
   user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   character_id TEXT DEFAULT NULL,
   chat_id TEXT DEFAULT NULL,
+  story_id TEXT DEFAULT NULL,
   action_type TEXT DEFAULT 'chat',
   tokens_in INTEGER DEFAULT 0,
   tokens_out INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS stories (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  synopsis TEXT DEFAULT '',
+  cover_image TEXT DEFAULT '',
+  genre TEXT DEFAULT 'Bebas',
+  tags TEXT DEFAULT '[]',
+  world_id TEXT DEFAULT NULL REFERENCES worlds(id) ON DELETE SET NULL,
+  pov TEXT NOT NULL DEFAULT 'third_limited',
+  tone TEXT NOT NULL DEFAULT 'sinematik',
+  writing_style_notes TEXT DEFAULT '',
+  authors_note TEXT DEFAULT '',
+  temperature DOUBLE PRECISION DEFAULT 0.85,
+  length_preset TEXT NOT NULL DEFAULT 'sedang',
+  status TEXT NOT NULL DEFAULT 'ongoing',
+  visibility TEXT NOT NULL DEFAULT 'private',
+  published_at TIMESTAMPTZ DEFAULT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS story_cast (
+  id TEXT PRIMARY KEY,
+  story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+  character_id TEXT DEFAULT NULL REFERENCES characters(id) ON DELETE SET NULL,
+  character_snapshot TEXT DEFAULT NULL,
+  name TEXT NOT NULL,
+  role_in_story TEXT NOT NULL DEFAULT 'pendukung',
+  bio TEXT DEFAULT '',
+  current_state TEXT DEFAULT '',
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS story_chapters (
+  id TEXT PRIMARY KEY,
+  story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+  chapter_number INTEGER NOT NULL DEFAULT 1,
+  title TEXT NOT NULL,
+  content TEXT DEFAULT '',
+  summary TEXT DEFAULT '',
+  outline_notes TEXT DEFAULT '',
+  word_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS story_revisions (
+  id TEXT PRIMARY KEY,
+  chapter_id TEXT NOT NULL REFERENCES story_chapters(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'append_variants',
+  base_content TEXT DEFAULT '',
+  variants TEXT DEFAULT '[]',
+  active_index INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS story_bookmarks (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, story_id)
 );
 
 CREATE TABLE IF NOT EXISTS uploads (
@@ -284,4 +351,15 @@ CREATE TABLE IF NOT EXISTS character_bookmarks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON character_bookmarks(user_id, created_at DESC);
+
+-- Fitur Storytelling Studio (Novel & Prosa)
+ALTER TABLE token_usage ADD COLUMN IF NOT EXISTS story_id TEXT DEFAULT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_stories_user ON stories(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stories_public ON stories(published_at DESC) WHERE visibility = 'public';
+CREATE INDEX IF NOT EXISTS idx_story_cast_story ON story_cast(story_id, sort_order ASC);
+CREATE INDEX IF NOT EXISTS idx_story_chapters_story ON story_chapters(story_id, chapter_number ASC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_story_revisions_chapter ON story_revisions(chapter_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_story_bookmarks_user ON story_bookmarks(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_token_usage_story ON token_usage(story_id) WHERE story_id IS NOT NULL;
 `;

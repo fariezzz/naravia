@@ -39,11 +39,16 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   chat: 'Chat',
   group_chat: 'Grup Chat',
   research: 'Riset Karakter',
-  summary: 'Ringkasan',
+  summary: 'Ringkasan Chat',
   memory: 'Ekstraksi Memori',
   title: 'Judul Otomatis',
   preview: 'Pratinjau & Tes',
   generate: 'Generate',
+  story_write: 'Tulis Novel',
+  story_outline: 'Brainstorm & Ide Plot',
+  story_rewrite: 'Sunting Prosa',
+  story_summary: 'Ringkas Bab Novel',
+  story_adapt: 'Adaptasi Chat ke Novel',
 };
 
 export default function AdminOverview() {
@@ -109,8 +114,12 @@ export default function AdminOverview() {
         />
         <StatCard label="Karakter" value={formatNumber(counts.characters)} />
         <StatCard label="Percakapan" value={formatNumber(counts.chats)} hint={`${formatNumber(counts.group_chats)} grup chat`} />
-        <StatCard label="Pesan" value={formatNumber(counts.messages)} />
-        <StatCard label="File Unggahan" value={formatNumber(counts.uploads)} hint={formatBytes(counts.upload_bytes)} />
+        <StatCard
+          label="Cerita & Novel"
+          value={formatNumber(counts.stories || 0)}
+          hint={`${formatNumber(counts.story_chapters || 0)} bab`}
+        />
+        <StatCard label="Pesan & Unggahan" value={formatNumber(counts.messages)} hint={`${formatNumber(counts.uploads)} file (${formatBytes(counts.upload_bytes)})`} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

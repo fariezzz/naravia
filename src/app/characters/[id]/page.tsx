@@ -587,7 +587,7 @@ export default function CharacterProfilePage() {
 
         {/* Pemilih Sapaan & Tombol Mulai Chat */}
         <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-          <div className="flex-1 min-w-0 max-w-full">
+          <div className="w-full md:flex-1 min-w-0 max-w-full">
             {character.greeting?.length > 1 ? (
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-2.5">
                 <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap shrink-0">
@@ -596,7 +596,7 @@ export default function CharacterProfilePage() {
                 <select
                   value={selectedGreetingIdx}
                   onChange={(e) => setSelectedGreetingIdx(Number(e.target.value))}
-                  className="h-10 px-3 py-0 rounded-xl border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-950 flex-1 w-full min-w-0 truncate focus:outline-none focus:border-indigo-500 shadow-2xs"
+                  className="h-10 px-3 py-0 rounded-xl border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-950 w-full sm:flex-1 min-w-0 truncate focus:outline-none focus:border-indigo-500 shadow-2xs"
                 >
                   {character.greeting.map((g: string, idx: number) => {
                     const cleanSnippet = g.replace(/[\r\n\t]+/g, ' ').trim();
@@ -741,7 +741,7 @@ export default function CharacterProfilePage() {
                     <option value="fact">Fakta Karakter/Pengguna</option>
                     <option value="preference">Preferensi / Kesukaan</option>
                   </select>
-                  <div className="flex-1 min-w-0">
+                  <div className="w-full sm:flex-1 min-w-0">
                     <textarea
                       rows={2}
                       value={newMemContent}

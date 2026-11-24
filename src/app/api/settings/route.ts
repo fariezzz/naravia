@@ -100,6 +100,7 @@ export async function POST(req: NextRequest) {
     if (body.action === 'reset_all') {
       enforceRateLimit(`reset-all:${user.id}`, 3, 60 * 60_000);
       await withTransaction(async (client) => {
+        await client.query('DELETE FROM stories WHERE user_id = $1', [user.id]);
         await client.query('DELETE FROM group_chats WHERE user_id = $1', [user.id]);
         await client.query('DELETE FROM chats WHERE user_id = $1', [user.id]);
         await client.query('DELETE FROM memories WHERE user_id = $1', [user.id]);

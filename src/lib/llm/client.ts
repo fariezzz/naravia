@@ -91,11 +91,13 @@ export async function generateLLMResponse(
   const timeoutMs = options.timeoutMs ?? (isResearchAction ? 120_000 : DEFAULT_LLM_TIMEOUT_MS);
 
   let result: LLMResponse;
+  const outputMode = options.outputMode ?? (options.jsonMode ? 'raw' : 'character');
   try {
     result = await callProvider(primary, messages, {
       temperature,
       maxTokens,
       jsonMode: options.jsonMode,
+      outputMode,
       timeoutMs,
     });
   } catch (primaryErr) {
@@ -108,6 +110,7 @@ export async function generateLLMResponse(
         temperature,
         maxTokens,
         jsonMode: options.jsonMode,
+        outputMode,
         timeoutMs,
       });
     } else {
@@ -119,6 +122,7 @@ export async function generateLLMResponse(
     userId: options.userId,
     characterId: options.characterId || null,
     chatId: options.chatId || null,
+    storyId: options.storyId || null,
     actionType: options.actionType || 'chat',
     tokensIn: result.tokensIn,
     tokensOut: result.tokensOut,
@@ -183,6 +187,7 @@ export async function* streamLLMResponse(
     userId: options.userId,
     characterId: options.characterId || null,
     chatId: options.chatId || null,
+    storyId: options.storyId || null,
     actionType: options.actionType || 'chat',
     tokensIn: outcome.tokensIn ?? estimateTokens(messages.map((m) => m.content).join('\n')),
     tokensOut: outcome.tokensOut ?? estimateTokens(outcome.fullText),

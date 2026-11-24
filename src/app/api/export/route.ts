@@ -30,36 +30,58 @@ export async function GET(req: NextRequest) {
     const user = await requireUser(req);
     enforceRateLimit(`export:${user.id}`, 10, 60 * 60_000);
 
-    const [characters, worlds, lore, personas, chats, messages, memories, groupChats, groupMembers, groupMessages] =
-      await Promise.all([
-        query('SELECT * FROM characters WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
-        query('SELECT * FROM worlds WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
-        query(
-          `SELECT l.* FROM lore_entries l JOIN worlds w ON w.id = l.world_id WHERE w.user_id = $1 ORDER BY l.created_at ASC`,
-          [user.id]
-        ),
-        query('SELECT * FROM user_personas WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
-        query('SELECT * FROM chats WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
-        query(
-          `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id WHERE c.user_id = $1 ORDER BY m.created_at ASC`,
-          [user.id]
-        ),
-        query('SELECT * FROM memories WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
-        query('SELECT * FROM group_chats WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
-        query(
-          `SELECT gm.* FROM group_chat_members gm JOIN group_chats g ON g.id = gm.group_chat_id WHERE g.user_id = $1`,
-          [user.id]
-        ),
-        query(
-          `SELECT gm.* FROM group_messages gm JOIN group_chats g ON g.id = gm.group_chat_id
-           WHERE g.user_id = $1 ORDER BY gm.created_at ASC`,
-          [user.id]
-        ),
-      ]);
+    const [
+      characters,
+      worlds,
+      lore,
+      personas,
+      chats,
+      messages,
+      memories,
+      groupChats,
+      groupMembers,
+      groupMessages,
+      stories,
+      storyCast,
+      storyChapters,
+    ] = await Promise.all([
+      query('SELECT * FROM characters WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
+      query('SELECT * FROM worlds WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
+      query(
+        `SELECT l.* FROM lore_entries l JOIN worlds w ON w.id = l.world_id WHERE w.user_id = $1 ORDER BY l.created_at ASC`,
+        [user.id]
+      ),
+      query('SELECT * FROM user_personas WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
+      query('SELECT * FROM chats WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
+      query(
+        `SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id WHERE c.user_id = $1 ORDER BY m.created_at ASC`,
+        [user.id]
+      ),
+      query('SELECT * FROM memories WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
+      query('SELECT * FROM group_chats WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
+      query(
+        `SELECT gm.* FROM group_chat_members gm JOIN group_chats g ON g.id = gm.group_chat_id WHERE g.user_id = $1`,
+        [user.id]
+      ),
+      query(
+        `SELECT gm.* FROM group_messages gm JOIN group_chats g ON g.id = gm.group_chat_id
+         WHERE g.user_id = $1 ORDER BY gm.created_at ASC`,
+        [user.id]
+      ),
+      query('SELECT * FROM stories WHERE user_id = $1 ORDER BY created_at ASC', [user.id]),
+      query(
+        `SELECT sc.* FROM story_cast sc JOIN stories s ON s.id = sc.story_id WHERE s.user_id = $1 ORDER BY sc.sort_order ASC`,
+        [user.id]
+      ),
+      query(
+        `SELECT ch.* FROM story_chapters ch JOIN stories s ON s.id = ch.story_id WHERE s.user_id = $1 ORDER BY ch.chapter_number ASC, ch.created_at ASC`,
+        [user.id]
+      ),
+    ]);
 
     const payload = {
       format: 'naravia-export',
-      version: 1,
+      version: 2,
       exported_at: new Date().toISOString(),
       account: { email: user.email, display_name: user.display_name },
       characters: characters.map(stripOwner),
@@ -72,6 +94,9 @@ export async function GET(req: NextRequest) {
       group_chats: groupChats.map(stripOwner),
       group_chat_members: groupMembers,
       group_messages: groupMessages,
+      stories: stories.map(stripOwner),
+      story_cast: storyCast,
+      story_chapters: storyChapters,
     };
 
     await logAudit({ userId: user.id, actorEmail: user.email, action: 'ekspor_data', ip: getClientIp(req) });
@@ -115,8 +140,11 @@ export async function POST(req: NextRequest) {
     const groupChatsIn = Array.isArray(body.group_chats) ? body.group_chats.slice(0, 200) : [];
     const groupMembersIn = Array.isArray(body.group_chat_members) ? body.group_chat_members.slice(0, 2000) : [];
     const groupMessagesIn = Array.isArray(body.group_messages) ? body.group_messages.slice(0, MAX_RESTORE_ITEMS) : [];
+    const storiesIn = Array.isArray(body.stories) ? body.stories.slice(0, 200) : [];
+    const storyCastIn = Array.isArray(body.story_cast) ? body.story_cast.slice(0, 2000) : [];
+    const storyChaptersIn = Array.isArray(body.story_chapters) ? body.story_chapters.slice(0, 3000) : [];
 
-    // Validasi avatar sebelum masuk transaksi
+    // Validasi avatar & sampul sebelum masuk transaksi
     const safeCharAvatars = new Map<number, string>();
     for (let i = 0; i < charactersIn.length; i++) {
       safeCharAvatars.set(i, await assertAvatarOwnership(charactersIn[i]?.avatar, user.id));
@@ -124,6 +152,10 @@ export async function POST(req: NextRequest) {
     const safePersonaAvatars = new Map<number, string>();
     for (let i = 0; i < personasIn.length; i++) {
       safePersonaAvatars.set(i, await assertAvatarOwnership(personasIn[i]?.avatar, user.id));
+    }
+    const safeStoryCovers = new Map<number, string>();
+    for (let i = 0; i < storiesIn.length; i++) {
+      safeStoryCovers.set(i, await assertAvatarOwnership(storiesIn[i]?.cover_image, user.id));
     }
 
     const restored = await withTransaction(async (client) => {
@@ -133,6 +165,7 @@ export async function POST(req: NextRequest) {
       const chatMap = new Map<string, string>();
       const msgMap = new Map<string, string>();
       const groupMap = new Map<string, string>();
+      const storyMap = new Map<string, string>();
 
       const counts = {
         worlds: 0,
@@ -144,6 +177,8 @@ export async function POST(req: NextRequest) {
         memories: 0,
         group_chats: 0,
         group_messages: 0,
+        stories: 0,
+        story_chapters: 0,
       };
 
       for (const w of worldsIn) {
@@ -376,6 +411,82 @@ export async function POST(req: NextRequest) {
         counts.group_messages++;
       }
 
+      for (let i = 0; i < storiesIn.length; i++) {
+        const st = storiesIn[i];
+        if (!st?.title) continue;
+        const nid = newId('sty');
+        if (st.id) storyMap.set(String(st.id), nid);
+        const mappedWorld = st.world_id ? worldMap.get(String(st.world_id)) || null : null;
+        await client.query(
+          `INSERT INTO stories (
+             id, user_id, title, synopsis, cover_image, genre, tags, world_id,
+             pov, tone, writing_style_notes, authors_note, temperature, length_preset, status, visibility
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'private')`,
+          [
+            nid,
+            user.id,
+            String(st.title).slice(0, 140),
+            String(st.synopsis || ''),
+            safeStoryCovers.get(i) || '',
+            String(st.genre || 'Bebas').slice(0, 40),
+            ensureJsonText(st.tags, '[]'),
+            mappedWorld,
+            String(st.pov || 'third_limited'),
+            String(st.tone || 'sinematik'),
+            String(st.writing_style_notes || ''),
+            String(st.authors_note || ''),
+            Number(st.temperature || 0.85),
+            String(st.length_preset || 'sedang'),
+            st.status === 'completed' ? 'completed' : 'ongoing',
+          ]
+        );
+        counts.stories++;
+      }
+
+      for (const sc of storyCastIn) {
+        const mappedStory = sc?.story_id ? storyMap.get(String(sc.story_id)) : null;
+        if (!mappedStory || !sc?.name) continue;
+        const mappedChar = sc.character_id ? charMap.get(String(sc.character_id)) || null : null;
+        await client.query(
+          `INSERT INTO story_cast (id, story_id, character_id, character_snapshot, name, role_in_story, bio, current_state, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            newId('cst'),
+            mappedStory,
+            mappedChar,
+            sc.character_snapshot ? String(sc.character_snapshot) : null,
+            String(sc.name).slice(0, 80),
+            String(sc.role_in_story || 'pendukung'),
+            String(sc.bio || ''),
+            String(sc.current_state || ''),
+            Number(sc.sort_order || 0),
+          ]
+        );
+      }
+
+      for (const ch of storyChaptersIn) {
+        const mappedStory = ch?.story_id ? storyMap.get(String(ch.story_id)) : null;
+        if (!mappedStory) continue;
+        const content = String(ch.content || '');
+        const wc = ch.word_count !== undefined ? Number(ch.word_count) : content.trim().split(/\s+/).filter(Boolean).length;
+        await client.query(
+          `INSERT INTO story_chapters (id, story_id, chapter_number, title, content, summary, outline_notes, word_count, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            newId('chp'),
+            mappedStory,
+            Math.max(1, Number(ch.chapter_number || 1)),
+            String(ch.title || 'Bab').slice(0, 140),
+            content,
+            String(ch.summary || ''),
+            String(ch.outline_notes || ''),
+            Math.max(0, wc),
+            ch.status === 'done' ? 'done' : 'draft',
+          ]
+        );
+        counts.story_chapters++;
+      }
+
       return counts;
     });
 
@@ -383,7 +494,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       actorEmail: user.email,
       action: 'pulihkan_cadangan_data',
-      detail: `karakter=${restored.characters}, chat=${restored.chats}, pesan=${restored.messages}`,
+      detail: `karakter=${restored.characters}, chat=${restored.chats}, pesan=${restored.messages}, cerita=${restored.stories}`,
       ip: getClientIp(req),
     });
 

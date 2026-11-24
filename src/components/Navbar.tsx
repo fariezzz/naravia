@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Compass, Users, Globe, Globe2, Settings, Plus, Menu, X, ShieldCheck, LogOut, Sun, Moon } from 'lucide-react';
+import { BookOpen, Compass, Users, Globe, Globe2, Settings, Plus, Menu, X, ShieldCheck, LogOut, Sun, Moon } from 'lucide-react';
 import CharacterAvatar from './CharacterAvatar';
 import { useAuth } from '@/lib/AuthContext';
 import { useTheme } from '@/lib/ThemeContext';
@@ -18,6 +18,9 @@ export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const isNewCharPage = pathname === '/characters/new';
+  const isNewStoryPage = pathname === '/stories/new';
+  const isStoriesSection = pathname === '/stories' || pathname.startsWith('/stories/');
+  const isStoryStudioPage = pathname.startsWith('/stories/') && !isNewStoryPage;
 
   useEffect(() => {
     setMobileOpen(false);
@@ -38,16 +41,21 @@ export default function Navbar() {
   const displayName = user?.display_name || 'Akun';
   const isAdmin = user?.role === 'admin';
 
+  // Pengaturan dipusatkan di dropdown profil akun pada desktop agar bilah atas tetap lega
   const navItems = [
     { href: '/', label: 'Beranda', icon: Compass, match: (p: string) => p === '/' || p.startsWith('/characters') || p.startsWith('/chat/') },
-    { href: '/jelajah', label: 'Jelajah', icon: Globe2, match: (p: string) => p.startsWith('/jelajah') },
+    { href: '/stories', label: 'Cerita', icon: BookOpen, match: (p: string) => p.startsWith('/stories') },
     { href: '/groups', label: 'Grup Chat', icon: Users, match: (p: string) => p.startsWith('/groups') },
     { href: '/worlds', label: 'Dunia & Lore', icon: Globe, match: (p: string) => p.startsWith('/worlds') },
-    { href: '/settings', label: 'Pengaturan', icon: Settings, match: (p: string) => p.startsWith('/settings') },
+    { href: '/jelajah', label: 'Jelajah', icon: Globe2, match: (p: string) => p.startsWith('/jelajah') },
     ...(isAdmin
       ? [{ href: '/admin', label: 'Admin', icon: ShieldCheck, match: (p: string) => p.startsWith('/admin') }]
       : []),
   ];
+
+  const ctaHref = isStoriesSection ? '/stories/new' : '/characters/new';
+  const ctaLabel = isStoriesSection ? 'Tulis Cerita' : 'Buat Karakter';
+  const showCta = isStoriesSection ? !isNewStoryPage : !isNewCharPage;
 
   // Pengalih tema dipindahkan ke halaman Pengaturan, tab Preferensi Chat
 
@@ -90,7 +98,7 @@ export default function Navbar() {
   return (
     <header
       className={`sticky top-0 z-20 w-full bg-white/95 dark:bg-[#0c1220]/95 backdrop-blur border-b border-slate-200 dark:border-slate-800 h-[54px] md:h-[64px] shrink-0 transition-colors ${
-        pathname.startsWith('/chat/') || pathname.startsWith('/groups/') ? 'hidden md:block' : 'block'
+        pathname.startsWith('/chat/') || pathname.startsWith('/groups/') || isStoryStudioPage ? 'hidden md:block' : 'block'
       }`}
     >
       <div className="max-w-6xl mx-auto h-full px-3.5 sm:px-4 flex items-center justify-between gap-4">
@@ -125,13 +133,13 @@ export default function Navbar() {
         </div>
 
         <div className="hidden md:flex items-center gap-2.5">
-          {!isNewCharPage && (
+          {showCta && (
             <Link
-              href="/characters/new"
+              href={ctaHref}
               className="h-[36px] px-3.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium inline-flex items-center gap-1.5 whitespace-nowrap transition-colors shadow-xs"
             >
               <Plus className="w-4 h-4 shrink-0" />
-              <span>Buat Karakter</span>
+              <span>{ctaLabel}</span>
             </Link>
           )}
 
@@ -202,13 +210,13 @@ export default function Navbar() {
         </div>
 
         <div className="flex md:hidden items-center gap-1.5">
-          {!isNewCharPage && (
+          {showCta && (
             <Link
-              href="/characters/new"
+              href={ctaHref}
               className="h-8 px-2.5 rounded-lg bg-indigo-600 text-white text-xs font-medium inline-flex items-center gap-1 whitespace-nowrap"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Buat Karakter</span>
+              <span>{ctaLabel}</span>
             </Link>
           )}
           <Link href="/settings" aria-label="Pengaturan Akun" className="rounded-full">
@@ -246,6 +254,17 @@ export default function Navbar() {
                 </Link>
               );
             })}
+            <Link
+              href="/settings"
+              className={`h-9 px-3 rounded-lg text-xs font-medium inline-flex items-center gap-2 transition-colors ${
+                pathname.startsWith('/settings')
+                  ? 'bg-slate-900 dark:bg-indigo-600 text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>Pengaturan</span>
+            </Link>
             <button
               type="button"
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}

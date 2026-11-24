@@ -143,6 +143,69 @@ export interface GroupChatRow {
   updated_at: string;
 }
 
+export type StoryPov = 'first_person' | 'third_limited' | 'third_omniscient';
+export type StoryTone = 'puitis' | 'sinematik' | 'ringan' | 'kelam' | 'klasik';
+export type StoryLengthPreset = 'pendek' | 'sedang' | 'panjang';
+
+export interface StoryRow {
+  id: string;
+  user_id: string;
+  title: string;
+  synopsis: string;
+  cover_image: string;
+  genre: string;
+  tags: string; // JSON string[]
+  world_id: string | null;
+  pov: StoryPov;
+  tone: StoryTone;
+  writing_style_notes: string;
+  authors_note: string;
+  temperature: number;
+  length_preset: StoryLengthPreset;
+  status: 'ongoing' | 'completed';
+  visibility: 'private' | 'public';
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoryCastRow {
+  id: string;
+  story_id: string;
+  character_id: string | null;
+  character_snapshot: string | null;
+  name: string;
+  role_in_story: 'protagonis' | 'antagonis' | 'pendukung';
+  bio: string;
+  current_state: string;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface StoryChapterRow {
+  id: string;
+  story_id: string;
+  chapter_number: number;
+  title: string;
+  content: string;
+  summary: string;
+  outline_notes: string;
+  word_count: number;
+  status: 'draft' | 'done';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoryRevisionRow {
+  id: string;
+  chapter_id: string;
+  kind: 'append_variants' | 'checkpoint';
+  base_content: string;
+  variants: string; // JSON string[]
+  active_index: number;
+  created_at: string;
+}
+
 declare global {
   // eslint-disable-next-line no-var
   var __naraviaPool: Pool | undefined;

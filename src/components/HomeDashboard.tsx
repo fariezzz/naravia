@@ -15,8 +15,10 @@ import {
   Lock,
   Clock,
   ChevronRight,
+  BookOpen,
 } from 'lucide-react';
 import CharacterAvatar from '@/components/CharacterAvatar';
+import StoryCover from '@/components/stories/StoryCover';
 import { getClientCache, setClientCache } from '@/lib/clientCache';
 
 interface CharacterItem {
@@ -88,6 +90,18 @@ function isCustomChatTitle(title: string | null | undefined, charName: string): 
   return Boolean(t && t !== n && t !== 'percakapan baru' && t !== `percakapan dengan ${n}` && t !== `chat dengan ${n}`);
 }
 
+interface RecentStoryItem {
+  id: string;
+  title: string;
+  genre: string;
+  cover_image: string;
+  chapter_count: number;
+  total_words: number;
+  latest_chapter_title: string | null;
+  latest_chapter_number: number;
+  updated_at: string;
+}
+
 export default function HomeDashboard() {
   const router = useRouter();
   const [characters, setCharacters] = useState<CharacterItem[]>(() => {
@@ -95,6 +109,9 @@ export default function HomeDashboard() {
   });
   const [recentChats, setRecentChats] = useState<RecentChatItem[]>(() => {
     return getClientCache<RecentChatItem[]>('home_recent_chats') || [];
+  });
+  const [recentStories, setRecentStories] = useState<RecentStoryItem[]>(() => {
+    return getClientCache<RecentStoryItem[]>('home_recent_stories') || [];
   });
   const [visitedChars, setVisitedChars] = useState<VisitedCharacterItem[]>(() => {
     return getClientCache<VisitedCharacterItem[]>('home_visited_chars') || [];
@@ -120,10 +137,11 @@ export default function HomeDashboard() {
     }
     setError('');
     try {
-      const [charRes, chatRes, visitedRes] = await Promise.all([
+      const [charRes, chatRes, visitedRes, storiesRes] = await Promise.all([
         fetch('/api/characters'),
         fetch('/api/chats'),
         fetch('/api/characters/visited'),
+        fetch('/api/stories'),
       ]);
       const charData = await charRes.json();
       const chatData = await chatRes.json();
@@ -142,6 +160,12 @@ export default function HomeDashboard() {
         const visited = visitedData.characters || [];
         setVisitedChars(visited);
         setClientCache('home_visited_chars', visited);
+      }
+      if (storiesRes.ok) {
+        const storyData = await storiesRes.json();
+        const stories = (storyData.stories || []).slice(0, 3);
+        setRecentStories(stories);
+        setClientCache('home_recent_stories', stories);
       }
     } catch (err) {
       if (!characters.length) {
@@ -287,6 +311,58 @@ export default function HomeDashboard() {
         </section>
       )}
 
+      {/* Lanjutkan Menulis Cerita / Novel (hanya tampil jika pengguna sudah memiliki cerita) */}
+      {recentStories.length > 0 && (
+        <section className="space-y-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <BookOpen className="w-4 h-4 text-indigo-500" />
+              <span>Lanjutkan Menulis</span>
+            </h2>
+            <Link
+              href="/stories"
+              className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white inline-flex items-center gap-1 shrink-0"
+            >
+              <span>Semua Cerita</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {recentStories.map((st) => (
+              <Link
+                key={st.id}
+                href={`/stories/${st.id}`}
+                className="group bg-white dark:bg-[#0f1729] rounded-xl border border-slate-200 dark:border-slate-800 p-3 hover:border-indigo-300 dark:hover:border-indigo-600 hover:shadow-xs transition-all flex items-center gap-3"
+              >
+                <StoryCover
+                  title={st.title}
+                  genre={st.genre}
+                  coverImage={st.cover_image}
+                  compact
+                  className="w-12 h-16 rounded-lg shrink-0 shadow-xs"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-1.5">
+                    <p className="font-display text-sm font-semibold text-slate-900 dark:text-white truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
+                      {st.title}
+                    </p>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0 tabular-nums">
+                      {formatRelativeShort(st.updated_at)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 truncate mt-0.5">
+                    Bab {st.latest_chapter_number}: {st.latest_chapter_title || 'Lanjutkan'}
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                    {st.genre} &bull; {st.chapter_count} bab &bull; {st.total_words.toLocaleString('id-ID')} kata
+                  </p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Karakter Milik Pengguna Lain yang Pernah Diajak Chat.
           Disembunyikan seluruhnya bila belum ada riwayatnya. */}
       {visitedChars.length > 0 && (
@@ -341,7 +417,7 @@ export default function HomeDashboard() {
       {/* Bar Pencarian & Filter Satu Baris Rapi */}
       <section className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-3.5 shadow-2xs space-y-2.5 sm:space-y-3">
         <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 sm:gap-3">
-          <div className="relative flex-1">
+          <div className="relative w-full md:flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"

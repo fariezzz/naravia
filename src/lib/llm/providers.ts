@@ -1,5 +1,11 @@
-import { cleanCharacterOutput, estimateTokens } from './cleaner';
-import { LLMMessage, LLMProtocol, LLMResponse, ProviderEndpoint, StreamOutcome } from './types';
+import { cleanCharacterOutput, cleanRawOutput, cleanStoryOutput, estimateTokens } from './cleaner';
+import { LLMMessage, LLMOutputMode, LLMProtocol, LLMResponse, ProviderEndpoint, StreamOutcome } from './types';
+
+function applyOutputCleaner(raw: string, mode: LLMOutputMode = 'character'): string {
+  if (mode === 'raw') return cleanRawOutput(raw);
+  if (mode === 'story') return cleanStoryOutput(raw);
+  return cleanCharacterOutput(raw);
+}
 
 export const DEFAULT_LLM_TIMEOUT_MS = 90_000;
 
@@ -68,7 +74,7 @@ function inlineSystemMessages(messages: LLMMessage[]): LLMMessage[] {
     return [
       {
         role: 'user',
-        content: `[INSTRUKSI SISTEM DAN PERAN KARAKTER]\n${sysText}\n[AKHIR INSTRUKSI SISTEM]\n\n${nonSys[0].content}`,
+        content: `[INSTRUKSI SISTEM]\n${sysText}\n[AKHIR INSTRUKSI SISTEM]\n\n${nonSys[0].content}`,
       },
       ...nonSys.slice(1),
     ];
@@ -76,7 +82,7 @@ function inlineSystemMessages(messages: LLMMessage[]): LLMMessage[] {
   return [
     {
       role: 'user',
-      content: `[INSTRUKSI SISTEM DAN PERAN KARAKTER]\n${sysText}\n[AKHIR INSTRUKSI SISTEM]`,
+      content: `[INSTRUKSI SISTEM]\n${sysText}\n[AKHIR INSTRUKSI SISTEM]`,
     },
     ...nonSys,
   ];
@@ -108,15 +114,15 @@ function buildGoogleContents(messages: LLMMessage[], inlineSystem: boolean) {
 
   if (inlineSystem && systemText) {
     if (rawTurns[0].role === 'user') {
-      rawTurns[0].text = `[INSTRUKSI SISTEM DAN PERAN KARAKTER]\n${systemText}\n[AKHIR INSTRUKSI SISTEM]\n\n${rawTurns[0].text}`;
+      rawTurns[0].text = `[INSTRUKSI SISTEM]\n${systemText}\n[AKHIR INSTRUKSI SISTEM]\n\n${rawTurns[0].text}`;
     } else {
       rawTurns.unshift({
         role: 'user',
-        text: `[INSTRUKSI SISTEM DAN PERAN KARAKTER]\n${systemText}\n[AKHIR INSTRUKSI SISTEM]`,
+        text: `[INSTRUKSI SISTEM]\n${systemText}\n[AKHIR INSTRUKSI SISTEM]`,
       });
     }
   } else if (rawTurns[0].role === 'model') {
-    rawTurns.unshift({ role: 'user', text: '(Percakapan dimulai)' });
+    rawTurns.unshift({ role: 'user', text: '(Mulai.)' });
   }
 
   return {
@@ -137,9 +143,10 @@ function combineSignals(timeoutMs: number, externalSignal?: AbortSignal): AbortS
 export async function callProvider(
   endpointCfg: ProviderEndpoint,
   messages: LLMMessage[],
-  params: { temperature: number; maxTokens: number; jsonMode?: boolean; timeoutMs?: number }
+  params: { temperature: number; maxTokens: number; jsonMode?: boolean; outputMode?: LLMOutputMode; timeoutMs?: number }
 ): Promise<LLMResponse> {
   const timeoutMs = params.timeoutMs || DEFAULT_LLM_TIMEOUT_MS;
+  const outputMode = params.outputMode || (params.jsonMode ? 'raw' : 'character');
   if (endpointCfg.protocol === 'google') {
     if (!endpointCfg.apiKey) {
       throw new Error(
@@ -153,6 +160,7 @@ export async function callProvider(
       temperature: params.temperature,
       maxTokens: params.maxTokens,
       jsonMode: params.jsonMode,
+      outputMode,
       timeoutMs,
     });
   }
@@ -164,6 +172,7 @@ export async function callProvider(
       temperature: params.temperature,
       maxTokens: params.maxTokens,
       jsonMode: params.jsonMode,
+      outputMode,
       timeoutMs,
     });
   }
@@ -174,6 +183,7 @@ export async function callProvider(
     temperature: params.temperature,
     maxTokens: params.maxTokens,
     jsonMode: params.jsonMode,
+    outputMode,
     timeoutMs,
   });
 }
@@ -187,6 +197,7 @@ async function callOpenAICompatible(
     temperature: number;
     maxTokens: number;
     jsonMode?: boolean;
+    outputMode: LLMOutputMode;
     timeoutMs: number;
   }
 ): Promise<LLMResponse> {
@@ -232,7 +243,7 @@ async function callOpenAICompatible(
     throw new Error(`Tidak dapat menghubungi Base URL (${endpoint}): ${msg}`);
   }
 
-  if (!res.ok && res.status === 400) {
+  if (!res.ok && (res.status === 400 || res.status === 422)) {
     res = await fetch(endpoint, {
       method: 'POST',
       headers,
@@ -246,13 +257,24 @@ async function callOpenAICompatible(
     throw new Error(`Provider API Error (${res.status}) dari ${endpoint}: ${errText.slice(0, 300)}`);
   }
 
-  const data = await res.json();
+  const rawBody = await res.text();
+  let data: any;
+  try {
+    data = JSON.parse(rawBody);
+  } catch {
+    throw new Error(
+      `Provider mengembalikan respons non-JSON (HTTP ${res.status}): ${rawBody.replace(/\s+/g, ' ').slice(0, 180)}`
+    );
+  }
   const choice = data?.choices?.[0];
   const rawContent =
     choice?.message?.content ?? choice?.text ?? data?.message?.content ?? data?.response ?? '';
 
-  const cleanedText = cleanCharacterOutput(String(rawContent));
+  const cleanedText = applyOutputCleaner(String(rawContent), params.outputMode);
   if (!cleanedText) {
+    if (choice?.finish_reason === 'length') {
+      throw new Error('Model kehabisan batas token sebelum menyelesaikan jawaban. Coba naikkan Max Tokens atau coba lagi.');
+    }
     throw new Error('Provider mengembalikan balasan kosong. Periksa nama model atau coba kirim ulang.');
   }
 
@@ -274,6 +296,7 @@ async function callGoogleAIStudio(
     temperature: number;
     maxTokens: number;
     jsonMode?: boolean;
+    outputMode: LLMOutputMode;
     timeoutMs: number;
   }
 ): Promise<LLMResponse> {
@@ -361,7 +384,7 @@ async function callGoogleAIStudio(
       }
 
       const textParts = (candidate?.content?.parts || []).map((p: { text?: string }) => p.text || '').join('');
-      const cleanedText = cleanCharacterOutput(textParts);
+      const cleanedText = applyOutputCleaner(textParts, params.outputMode);
       if (!cleanedText) {
         throw new Error('Model mengembalikan teks kosong. Silakan coba regenerate balasan.');
       }
@@ -388,6 +411,7 @@ async function callOllama(
     temperature: number;
     maxTokens: number;
     jsonMode?: boolean;
+    outputMode: LLMOutputMode;
     timeoutMs: number;
   }
 ): Promise<LLMResponse> {
@@ -417,7 +441,7 @@ async function callOllama(
     }
 
     const data = await res.json();
-    const cleaned = cleanCharacterOutput(data?.choices?.[0]?.message?.content || '');
+    const cleaned = applyOutputCleaner(data?.choices?.[0]?.message?.content || '', params.outputMode);
     return {
       text: cleaned,
       tokensIn: data?.usage?.prompt_tokens ?? estimateTokens(messages.map((m) => m.content).join('\n')),
@@ -453,7 +477,7 @@ async function callOllama(
   }
 
   const data = await res.json();
-  const cleaned = cleanCharacterOutput(data?.message?.content || '');
+  const cleaned = applyOutputCleaner(data?.message?.content || '', params.outputMode);
   return {
     text: cleaned,
     tokensIn: data?.prompt_eval_count ?? estimateTokens(messages.map((m) => m.content).join('\n')),

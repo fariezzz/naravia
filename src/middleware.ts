@@ -16,20 +16,25 @@ const PUBLIC_PAGES = ['/', '/login', '/register'];
 const PUBLIC_ASSET_PREFIXES = ['/landing/', '/uploads/'];
 
 /**
- * Halaman dan endpoint karakter publik boleh dibuka tamu. Middleware tidak bisa
+ * Halaman dan endpoint karakter/cerita publik boleh dibuka tamu. Middleware tidak bisa
  * membedakan metode HTTP secara andal untuk otorisasi, jadi setiap handler yang
  * mengubah data (POST/PUT/DELETE) tetap memanggil requireUser sendiri.
- * Yang diloloskan di sini hanya pembacaan satu karakter dan katalog publik.
+ * Yang diloloskan di sini hanya pembacaan satu karakter/cerita publik dan katalog publik.
  */
-function isPublicCharacterPath(pathname: string): boolean {
+function isPublicBrowsePath(pathname: string): boolean {
   if (pathname === '/jelajah') return true;
   if (pathname === '/api/characters/public') return true;
+  if (pathname === '/api/stories/public') return true;
 
-  // /characters/<id> dan /api/characters/<id>, tetapi bukan sub-route lain di
-  // bawah /characters/ yang kebetulan berbentuk satu segmen dan tetap butuh sesi
-  const SEGMEN_BUKAN_ID = ['new', 'public', 'visited'];
-  const detail = pathname.match(/^(?:\/api)?\/characters\/([^/]+)$/);
-  if (detail && !SEGMEN_BUKAN_ID.includes(detail[1])) return true;
+  // /characters/<id> dan /api/characters/<id>
+  const CHAR_NON_ID = ['new', 'public', 'visited'];
+  const charDetail = pathname.match(/^(?:\/api)?\/characters\/([^/]+)$/);
+  if (charDetail && !CHAR_NON_ID.includes(charDetail[1])) return true;
+
+  // /stories/<id>, /api/stories/<id>, dan /api/stories/<id>/export (handler mengecek visibility='public')
+  const STORY_NON_ID = ['new', 'public', 'brainstorm'];
+  const storyDetail = pathname.match(/^(?:\/api)?\/stories\/([^/]+)(?:\/export)?$/);
+  if (storyDetail && !STORY_NON_ID.includes(storyDetail[1])) return true;
 
   return false;
 }
@@ -41,9 +46,9 @@ export function middleware(req: NextRequest) {
 
   if (pathname.startsWith('/api/')) {
     if (PUBLIC_API.includes(pathname)) return NextResponse.next();
-    // Pembacaan karakter publik diizinkan tanpa sesi; handler-nya tetap
-    // memanggil requireUser untuk PUT/DELETE
-    if (isPublicCharacterPath(pathname)) return NextResponse.next();
+    // Pembacaan karakter/cerita publik diizinkan tanpa sesi; handler-nya tetap
+    // memanggil requireUser untuk PUT/DELETE/POST dan menolak item privat
+    if (isPublicBrowsePath(pathname)) return NextResponse.next();
     if (!hasSession) {
       return NextResponse.json({ error: 'Silakan masuk terlebih dahulu.' }, { status: 401 });
     }
@@ -56,8 +61,8 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Katalog dan profil karakter publik bisa dibuka tanpa akun
-  if (isPublicCharacterPath(pathname)) return NextResponse.next();
+  // Katalog dan detail karakter/cerita publik bisa dibuka tanpa akun
+  if (isPublicBrowsePath(pathname)) return NextResponse.next();
 
   const isPublicPage = PUBLIC_PAGES.some((p) => pathname === p || (p !== '/' && pathname.startsWith(`${p}/`)));
   if (isPublicPage) return NextResponse.next();

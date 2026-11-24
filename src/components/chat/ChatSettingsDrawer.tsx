@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Activity, Brain, Globe, RefreshCw, Trash2, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Activity, BookOpen, Brain, Globe, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
 import { ChatContextSnapshot, PersonaItem } from './types';
 
 interface ChatSettingsDrawerProps {
@@ -54,9 +55,29 @@ export default function ChatSettingsDrawer({
   onSaveSettings,
   onRequestDeleteChat,
 }: ChatSettingsDrawerProps) {
+  const router = useRouter();
   const [drawerTab, setDrawerTab] = useState<'settings' | 'inspector'>('settings');
   const [contextInfo, setContextInfo] = useState<ChatContextSnapshot | null>(null);
   const [loadingContext, setLoadingContext] = useState(false);
+  const [convertingToStory, setConvertingToStory] = useState(false);
+  const [convertError, setConvertError] = useState('');
+
+  const handleConvertToStory = async () => {
+    if (convertingToStory) return;
+    setConvertingToStory(true);
+    setConvertError('');
+    try {
+      const res = await fetch(`/api/chats/${chatId}/to-story`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gagal mengadaptasi percakapan ke novel.');
+      if (data.story?.id) {
+        router.push(`/stories/${data.story.id}`);
+      }
+    } catch (err) {
+      setConvertError(err instanceof Error ? err.message : 'Gagal mengadaptasi percakapan ke novel.');
+      setConvertingToStory(false);
+    }
+  };
 
   const loadContext = async () => {
     setLoadingContext(true);
@@ -360,7 +381,25 @@ export default function ChatSettingsDrawer({
               </div>
             )}
 
-            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+              <button
+                type="button"
+                disabled={convertingToStory || messageCount < 2}
+                onClick={handleConvertToStory}
+                title="Adaptasi riwayat percakapan ini menjadi Bab 1 sebuah novel di Storytelling Studio"
+                className="w-full h-8 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-xs font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors"
+              >
+                {convertingToStory ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <BookOpen className="w-3.5 h-3.5" />
+                )}
+                <span>{convertingToStory ? 'Mengadaptasi ke Novel...' : 'Jadikan Draf Novel'}</span>
+              </button>
+              {convertError && (
+                <p className="text-[11px] text-rose-600 dark:text-rose-400 leading-snug">{convertError}</p>
+              )}
+
               <button
                 type="button"
                 onClick={onRequestDeleteChat}

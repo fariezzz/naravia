@@ -108,6 +108,7 @@ export async function getRelevantLore(
            AND (
              w.user_id = $2
              OR EXISTS (SELECT 1 FROM characters c WHERE c.world_id = w.id AND c.visibility = 'public')
+             OR EXISTS (SELECT 1 FROM stories s WHERE s.world_id = w.id AND s.visibility = 'public')
            )`,
         [worldId, userId]
       )
