@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Activity, BookOpen, Brain, Globe, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
+import AutoResizeTextarea from '@/components/AutoResizeTextarea';
 import { ChatContextSnapshot, PersonaItem } from './types';
 
 interface ChatSettingsDrawerProps {
@@ -272,11 +273,13 @@ export default function ChatSettingsDrawer({
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Judul Ruang Chat
                 </label>
-                <input
-                  type="text"
+                <AutoResizeTextarea
+                  rows={1}
+                  maxHeight={88}
+                  singleParagraph
                   value={chatTitleInput}
                   onChange={(e) => onChangeTitle(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
+                  className="w-full min-h-8 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] text-xs leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                 />
               </div>
 

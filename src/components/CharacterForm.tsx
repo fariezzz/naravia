@@ -13,6 +13,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
+import AutoResizeTextarea from './AutoResizeTextarea';
 import CharacterAvatar from './CharacterAvatar';
 import ImageCropModal from './ImageCropModal';
 import CharacterPreviewSidebar from './character-form/CharacterPreviewSidebar';
@@ -658,12 +659,14 @@ export default function CharacterForm({
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Tagline (Satu Kalimat Pengenal)
               </label>
-              <input
-                type="text"
+              <AutoResizeTextarea
+                rows={1}
+                maxHeight={100}
+                singleParagraph
                 value={form.tagline}
                 onChange={(e) => setForm((p) => ({ ...p, tagline: e.target.value }))}
                 placeholder="Contoh: Penyihir restorasi artefak yang selalu lapar"
-                className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                className="w-full min-h-9 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-sm leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
@@ -671,12 +674,14 @@ export default function CharacterForm({
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Tag Pencarian (Pisahkan dengan koma)
               </label>
-              <input
-                type="text"
+              <AutoResizeTextarea
+                rows={1}
+                maxHeight={96}
+                singleParagraph
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
                 placeholder="Fantasi, Sarkastik, Mentor, Misteri"
-                className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
+                className="w-full min-h-9 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs leading-5 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
               />
             </div>
           </div>
@@ -866,8 +871,9 @@ export default function CharacterForm({
                       </button>
                     )}
                   </div>
-                  <input
-                    type="text"
+                  <AutoResizeTextarea
+                    rows={1}
+                    maxHeight={120}
                     value={pair.user}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -878,7 +884,7 @@ export default function CharacterForm({
                       });
                     }}
                     placeholder="Ucapan Pengguna..."
-                    className="w-full h-8 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0c1220] text-xs text-slate-900 dark:text-slate-100"
+                    className="w-full min-h-8 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0c1220] text-xs leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                   />
                   <textarea
                     rows={2}

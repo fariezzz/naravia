@@ -27,6 +27,7 @@ import {
   Wand2,
   X,
 } from 'lucide-react';
+import AutoResizeTextarea from '@/components/AutoResizeTextarea';
 import ConfirmModal from '@/components/ConfirmModal';
 import StoryBibleDrawer from '@/components/stories/StoryBibleDrawer';
 import StoryChapterSidebar from '@/components/stories/StoryChapterSidebar';
@@ -914,19 +915,24 @@ function StoryStudioContent() {
                     ))}
                   </div>
 
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
+                  <div className="flex items-end gap-1.5">
+                    <AutoResizeTextarea
+                      rows={1}
+                      maxHeight={110}
+                      submitOnEnter
+                      onEnterSubmit={() => {
+                        if (!rewriting && customRewriteInput.trim()) handleInlineRewrite('custom');
+                      }}
                       value={customRewriteInput}
                       onChange={(e) => setCustomRewriteInput(e.target.value)}
                       placeholder="Atau instruksi kustom (mis: ubah lebih menegangkan)..."
-                      className="flex-1 h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
+                      className="flex-1 min-h-8 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                     />
                     <button
                       type="button"
                       disabled={rewriting || !customRewriteInput.trim()}
                       onClick={() => handleInlineRewrite('custom')}
-                      className="h-8 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold"
+                      className="h-8 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold shrink-0"
                     >
                       Jalankan
                     </button>
@@ -974,8 +980,10 @@ function StoryStudioContent() {
                       {currentWords.toLocaleString('id-ID')} kata
                     </span>
                   </div>
-                  <input
-                    type="text"
+                  <AutoResizeTextarea
+                    rows={1}
+                    maxHeight={140}
+                    singleParagraph
                     spellCheck={prefs.spellCheck}
                     value={chapterTitle}
                     onChange={(e) => {
@@ -1112,20 +1120,25 @@ function StoryStudioContent() {
                   </div>
                 )}
 
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700/90 bg-white/95 dark:bg-[#0f1729]/95 backdrop-blur-md shadow-xl p-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <input
-                    type="text"
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700/90 bg-white/95 dark:bg-[#0f1729]/95 backdrop-blur-md shadow-xl p-2 flex flex-col sm:flex-row items-stretch sm:items-end gap-2">
+                  <AutoResizeTextarea
+                    rows={1}
+                    maxHeight={140}
+                    submitOnEnter
+                    onEnterSubmit={() => {
+                      if (!generating && beatInput.trim()) handleGenerate('continue');
+                    }}
                     value={beatInput}
                     disabled={generating}
                     onChange={(e) => setBeatInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || beatInput.trim())) {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                         e.preventDefault();
-                        handleGenerate('continue');
+                        if (!generating) handleGenerate('continue');
                       }
                     }}
                     placeholder="Arahan adegan berikutnya (opsional — kosongkan agar AI lanjut otomatis)..."
-                    className="w-full sm:flex-1 h-10 sm:h-9 px-3 rounded-xl bg-transparent text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
+                    className="w-full sm:flex-1 min-h-10 sm:min-h-9 px-3 py-2 rounded-xl bg-transparent text-xs sm:text-sm leading-5 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
                   />
 
                   <div className="flex items-center justify-end gap-1.5 shrink-0">

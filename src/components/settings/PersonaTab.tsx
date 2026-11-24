@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Image as ImageIcon, Plus, Save, Star, Trash2 } from 'lucide-react';
+import AutoResizeTextarea from '@/components/AutoResizeTextarea';
 import CharacterAvatar from '@/components/CharacterAvatar';
 
 export interface PersonaFormState {
@@ -219,24 +220,26 @@ export default function PersonaTab({
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Hal yang Disukai
             </label>
-            <input
-              type="text"
+            <AutoResizeTextarea
+              rows={2}
+              maxHeight={140}
               value={persona.likes}
               onChange={(e) => onChangePersona((p) => ({ ...p, likes: e.target.value }))}
               placeholder="Kopi hitam, diskusi logis, cerita misteri..."
-              className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
             />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Hal yang Tidak Disukai
             </label>
-            <input
-              type="text"
+            <AutoResizeTextarea
+              rows={2}
+              maxHeight={140}
               value={persona.dislikes}
               onChange={(e) => onChangePersona((p) => ({ ...p, dislikes: e.target.value }))}
               placeholder="Basa-basi berulang, jawaban bertele-tele..."
-              className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100"
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
             />
           </div>
         </div>

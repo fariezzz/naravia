@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Send } from 'lucide-react';
+import AutoResizeTextarea from '@/components/AutoResizeTextarea';
 import FormattedMessage from '@/components/FormattedMessage';
 
 interface CharacterPreviewSidebarProps {
@@ -75,19 +76,18 @@ export default function CharacterPreviewSidebar({
           )}
         </div>
 
-        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
-          <input
-            type="text"
+        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-end gap-2">
+          <AutoResizeTextarea
+            rows={1}
+            maxHeight={120}
+            submitOnEnter
+            onEnterSubmit={() => {
+              if (!loading && input.trim()) onSend();
+            }}
             value={input}
             onChange={(e) => onChangeInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                onSend();
-              }
-            }}
             placeholder="Ketik pesan uji coba..."
-            className="flex-1 h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+            className="flex-1 min-h-9 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] text-xs leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
           />
           <button
             type="button"

@@ -18,6 +18,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import AutoResizeTextarea from '@/components/AutoResizeTextarea';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import {
   STORY_GENRES,
@@ -453,8 +454,9 @@ export default function StoryBibleDrawer({
                       </div>
                     </div>
 
-                    <input
-                      type="text"
+                    <AutoResizeTextarea
+                      rows={1}
+                      maxHeight={100}
                       value={m.current_state || ''}
                       onChange={(e) =>
                         setCastDraft((prev) =>
@@ -462,7 +464,7 @@ export default function StoryBibleDrawer({
                         )
                       }
                       placeholder="Kondisi terkini di cerita (mis: terluka, curiga, di stasiun...)"
-                      className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-[11px] text-slate-800 dark:text-slate-100"
+                      className="w-full min-h-8 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-[11px] leading-4 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                     />
                   </div>
                 ))
@@ -575,12 +577,13 @@ export default function StoryBibleDrawer({
                   <option value="pendukung">Pendukung</option>
                 </select>
               </div>
-              <input
-                type="text"
+              <AutoResizeTextarea
+                rows={2}
+                maxHeight={120}
                 value={newBio}
                 onChange={(e) => setNewBio(e.target.value)}
                 placeholder="Profil singkat..."
-                className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs leading-4 focus:outline-none focus:border-indigo-500"
               />
               <button
                 type="button"
@@ -812,11 +815,13 @@ export default function StoryBibleDrawer({
 
             <div className="space-y-1">
               <label className="font-semibold text-slate-700 dark:text-slate-200 block">Tag (pisah koma)</label>
-              <input
-                type="text"
+              <AutoResizeTextarea
+                rows={1}
+                maxHeight={96}
+                singleParagraph
                 value={tagsText}
                 onChange={(e) => setTagsText(e.target.value)}
-                className="w-full h-9 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+                className="w-full min-h-9 px-2.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs leading-5 focus:outline-none focus:border-indigo-500"
               />
             </div>
 

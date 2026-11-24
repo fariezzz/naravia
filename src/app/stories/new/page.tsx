@@ -16,6 +16,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import AutoResizeTextarea from '@/components/AutoResizeTextarea';
 import CharacterAvatar from '@/components/CharacterAvatar';
 import StoryCover from '@/components/stories/StoryCover';
 import {
@@ -322,13 +323,18 @@ export default function NewStoryPage() {
           Punya ide sekilas? Tulis 1–2 kalimat premis di bawah, lalu AI akan membantu merumuskan judul, sinopsis,
           kerangka 3 bab awal, dan paragraf pembuka yang bisa langsung kamu sunting.
         </p>
-        <div className="flex flex-col sm:flex-row gap-2.5">
-          <input
-            type="text"
+        <div className="flex flex-col sm:flex-row sm:items-end gap-2.5">
+          <AutoResizeTextarea
+            rows={2}
+            maxHeight={160}
+            submitOnEnter
+            onEnterSubmit={() => {
+              if (!brainstorming && premiseInput.trim().length >= 6) handleBrainstorm();
+            }}
             value={premiseInput}
             onChange={(e) => setPremiseInput(e.target.value)}
             placeholder="Contoh: Seorang penjaga mercusuar tua menemukan surat dari masa depan yang menyelamatkan kotanya..."
-            className="w-full sm:flex-1 h-10 px-3.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+            className="w-full sm:flex-1 px-3.5 py-2.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-950 text-sm leading-5 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
           />
           <button
             type="button"
@@ -421,12 +427,14 @@ export default function NewStoryPage() {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   Tag Tema (pisah koma)
                 </label>
-                <input
-                  type="text"
+                <AutoResizeTextarea
+                  rows={1}
+                  maxHeight={100}
+                  singleParagraph
                   value={tagsInput}
                   onChange={(e) => setTagsInput(e.target.value)}
                   placeholder="hujan, rahasia, persahabatan"
-                  className="w-full h-10 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                  className="w-full min-h-10 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
@@ -547,12 +555,13 @@ export default function NewStoryPage() {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   Catatan Sutradara Awal (Opsional)
                 </label>
-                <input
-                  type="text"
+                <AutoResizeTextarea
+                  rows={1}
+                  maxHeight={120}
                   value={authorsNote}
                   onChange={(e) => setAuthorsNote(e.target.value)}
                   placeholder="Misal: Fokus ketegangan perlahan, hindari humor berlebih"
-                  className="w-full h-10 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                  className="w-full min-h-10 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
@@ -629,12 +638,13 @@ export default function NewStoryPage() {
                   <span>Tambah Tokoh</span>
                 </button>
               </div>
-              <input
-                type="text"
+              <AutoResizeTextarea
+                rows={2}
+                maxHeight={120}
                 value={localBio}
                 onChange={(e) => setLocalBio(e.target.value)}
                 placeholder="Sifat & peran singkat (opsional)..."
-                className="w-full h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
@@ -727,8 +737,9 @@ export default function NewStoryPage() {
                       </button>
                     )}
                   </div>
-                  <input
-                    type="text"
+                  <AutoResizeTextarea
+                    rows={1}
+                    maxHeight={120}
                     value={ch.outline_notes}
                     onChange={(e) =>
                       setChapters((prev) =>
@@ -736,7 +747,7 @@ export default function NewStoryPage() {
                       )
                     }
                     placeholder="Rencana singkat adegan bab ini (opsional)..."
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs text-slate-700 dark:text-slate-300"
+                    className="w-full min-h-8 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs leading-5 text-slate-700 dark:text-slate-300 focus:outline-none focus:border-indigo-500"
                   />
                 </div>
               ))}

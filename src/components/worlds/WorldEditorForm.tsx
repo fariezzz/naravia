@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Clock, MapPin, Save, Shield, Trash2 } from 'lucide-react';
+import AutoResizeTextarea from '@/components/AutoResizeTextarea';
 
 interface WorldEditorFormProps {
   isCreating: boolean;
@@ -25,6 +26,9 @@ interface WorldEditorFormProps {
 
 const inputCls =
   'w-full h-7 px-2 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0c1220] text-xs text-slate-900 dark:text-slate-100';
+
+const textareaCls =
+  'w-full min-h-8 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0c1220] text-xs leading-4 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500';
 
 export default function WorldEditorForm({
   isCreating,
@@ -135,15 +139,16 @@ export default function WorldEditorForm({
                 placeholder="Nama Lokasi"
                 className={inputCls}
               />
-              <input
-                type="text"
+              <AutoResizeTextarea
+                rows={2}
+                maxHeight={120}
                 value={pl.description}
                 onChange={(e) => {
                   const v = e.target.value;
                   onChangePlaces((p) => p.map((item, i) => (i === idx ? { ...item, description: v } : item)));
                 }}
                 placeholder="Keterangan singkat"
-                className={inputCls}
+                className={textareaCls}
               />
             </div>
           ))}
@@ -178,15 +183,16 @@ export default function WorldEditorForm({
                 placeholder="Nama Faksi"
                 className={inputCls}
               />
-              <input
-                type="text"
+              <AutoResizeTextarea
+                rows={2}
+                maxHeight={120}
                 value={fc.description}
                 onChange={(e) => {
                   const v = e.target.value;
                   onChangeFactions((p) => p.map((item, i) => (i === idx ? { ...item, description: v } : item)));
                 }}
                 placeholder="Peran faksi"
-                className={inputCls}
+                className={textareaCls}
               />
             </div>
           ))}
@@ -221,15 +227,16 @@ export default function WorldEditorForm({
                 placeholder="Tahun / Era"
                 className={inputCls}
               />
-              <input
-                type="text"
+              <AutoResizeTextarea
+                rows={2}
+                maxHeight={120}
                 value={tm.event}
                 onChange={(e) => {
                   const v = e.target.value;
                   onChangeTimeline((p) => p.map((item, i) => (i === idx ? { ...item, event: v } : item)));
                 }}
                 placeholder="Peristiwa penting"
-                className={inputCls}
+                className={textareaCls}
               />
             </div>
           ))}

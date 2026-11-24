@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { BookOpen, Plus, Trash2 } from 'lucide-react';
+import AutoResizeTextarea from '@/components/AutoResizeTextarea';
 import CharacterAvatar from '@/components/CharacterAvatar';
 
 interface LorebookSectionProps {
@@ -64,13 +65,15 @@ export default function LorebookSection({
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Kata Kunci Pemicu (Pisahkan dengan koma) *
             </label>
-            <input
-              type="text"
+            <AutoResizeTextarea
+              rows={1}
+              maxHeight={96}
+              singleParagraph
               required
               value={loreKeywords}
               onChange={(e) => onChangeKeywords(e.target.value)}
               placeholder="menara jam, lonceng, dewan"
-              className="w-full h-8 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0c1220] text-xs text-slate-900 dark:text-slate-100"
+              className="w-full min-h-8 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0c1220] text-xs leading-5 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
             />
           </div>
         </div>
