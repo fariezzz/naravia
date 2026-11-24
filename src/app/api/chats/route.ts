@@ -5,7 +5,14 @@ import { ChatRow, query, queryOne, withTransaction } from '@/lib/db';
 import { parseJsonSafe, stripOwner } from '@/lib/format';
 import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
-import { getDefaultPersona, getPersonaById, getUserSettings, requireVisibleCharacter } from '@/lib/store';
+import {
+  clampMaxTokens,
+  clampTemperature,
+  getDefaultPersona,
+  getPersonaById,
+  getUserSettings,
+  requireVisibleCharacter,
+} from '@/lib/store';
 
 export const runtime = 'nodejs';
 
@@ -63,15 +70,19 @@ export async function POST(req: NextRequest) {
     const title = String(body.title || '').trim().slice(0, 120) || `Percakapan dengan ${character.name}`;
 
     const settings = await getUserSettings(user.id);
-    const effectiveTemp =
+    const effectiveTemp = clampTemperature(
       character.temperature_override ??
-      (body.temperature !== undefined && body.temperature !== null && body.temperature !== ''
-        ? Number(body.temperature)
-        : parseFloat(settings.temperature || '0.9') || 0.9);
-    const effectiveMaxTokens =
+        (body.temperature !== undefined && body.temperature !== null && body.temperature !== ''
+          ? body.temperature
+          : settings.temperature),
+      0.9
+    );
+    const effectiveMaxTokens = clampMaxTokens(
       body.maxTokens !== undefined && body.maxTokens !== null && body.maxTokens !== ''
-        ? Number(body.maxTokens)
-        : parseInt(settings.max_tokens || '1024', 10) || 1024;
+        ? body.maxTokens
+        : settings.max_tokens,
+      1024
+    );
     const effectiveReplyStyle = String(body.replyStyle || settings.default_reply_style || 'sedang');
 
     const chatId = newId('chat');

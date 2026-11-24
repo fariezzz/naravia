@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { assertAvatarOwnership } from '@/lib/assets';
+import { assertAvatarOwnership, sanitizeSnapshotAvatar } from '@/lib/assets';
 import { requireUser } from '@/lib/auth';
-import { query, withTransaction } from '@/lib/db';
-import { stripOwner } from '@/lib/format';
+import { query, queryOne, withTransaction } from '@/lib/db';
+import { sanitizeCharacterSnapshotForExport, stripOwner } from '@/lib/format';
 import { getClientIp, handleApiError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
 import { sanitizeMemoryForClient } from '@/lib/memories';
 import { enforceRateLimit } from '@/lib/rateLimit';
-import { logAudit } from '@/lib/store';
+import { clampMaxTokens, clampTemperature, logAudit } from '@/lib/store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const MAX_RESTORE_ITEMS = 5000;
+const MAX_RESTORE_BODY_BYTES = 25 * 1024 * 1024; // 25 MB
+const MAX_CHARACTERS_PER_USER = 300;
+const MAX_WORLDS_PER_USER = 100;
+const MAX_PERSONAS_PER_USER = 30;
 
 function ensureJsonText(val: unknown, fallback = '[]'): string {
   if (typeof val === 'string') return val;
@@ -79,6 +83,23 @@ export async function GET(req: NextRequest) {
       ),
     ]);
 
+    const ownedCharIds = new Set(characters.map((c: { id: string }) => c.id));
+    const sanitizedChats = chats.map((ch: any) => {
+      const stripped = stripOwner(ch);
+      const isCharOwner = Boolean(ch.character_id && ownedCharIds.has(ch.character_id));
+      return {
+        ...stripped,
+        character_snapshot: sanitizeCharacterSnapshotForExport(ch.character_snapshot, isCharOwner),
+      };
+    });
+    const sanitizedStoryCast = storyCast.map((sc: any) => {
+      const isCharOwner = Boolean(sc.character_id && ownedCharIds.has(sc.character_id));
+      return {
+        ...sc,
+        character_snapshot: sanitizeCharacterSnapshotForExport(sc.character_snapshot, isCharOwner),
+      };
+    });
+
     const payload = {
       format: 'naravia-export',
       version: 2,
@@ -88,14 +109,14 @@ export async function GET(req: NextRequest) {
       worlds: worlds.map(stripOwner),
       lore_entries: lore,
       personas: personas.map(stripOwner),
-      chats: chats.map(stripOwner),
+      chats: sanitizedChats,
       messages,
       memories: memories.map(sanitizeMemoryForClient),
       group_chats: groupChats.map(stripOwner),
       group_chat_members: groupMembers,
       group_messages: groupMessages,
       stories: stories.map(stripOwner),
-      story_cast: storyCast,
+      story_cast: sanitizedStoryCast,
       story_chapters: storyChapters,
     };
 
@@ -125,15 +146,30 @@ export async function POST(req: NextRequest) {
     const user = await requireUser(req);
     enforceRateLimit(`restore:${user.id}`, 5, 60 * 60_000);
 
-    const body = await readJson(req);
+    const contentLength = Number(req.headers.get('content-length') || 0);
+    if (contentLength > MAX_RESTORE_BODY_BYTES) {
+      return jsonError('Ukuran berkas cadangan maksimal 25 MB.', 413);
+    }
+
+    const body = await readJson(req, MAX_RESTORE_BODY_BYTES);
     if (!body || body.format !== 'naravia-export') {
       return jsonError('Format berkas tidak dikenali. Pilih berkas JSON hasil Ekspor Data Naravia.', 400);
     }
 
-    const worldsIn = Array.isArray(body.worlds) ? body.worlds.slice(0, 200) : [];
+    // Patuhi batas kapasitas entitas per akun agar restore berulang tidak melampaui kuota
+    const [charCnt, worldCnt, personaCnt] = await Promise.all([
+      queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM characters WHERE user_id = $1', [user.id]),
+      queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM worlds WHERE user_id = $1', [user.id]),
+      queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM user_personas WHERE user_id = $1', [user.id]),
+    ]);
+    const remainingChars = Math.max(0, MAX_CHARACTERS_PER_USER - Number(charCnt?.cnt || 0));
+    const remainingWorlds = Math.max(0, MAX_WORLDS_PER_USER - Number(worldCnt?.cnt || 0));
+    const remainingPersonas = Math.max(0, MAX_PERSONAS_PER_USER - Number(personaCnt?.cnt || 0));
+
+    const worldsIn = Array.isArray(body.worlds) ? body.worlds.slice(0, remainingWorlds) : [];
     const loreIn = Array.isArray(body.lore_entries) ? body.lore_entries.slice(0, 2000) : [];
-    const personasIn = Array.isArray(body.personas) ? body.personas.slice(0, 100) : [];
-    const charactersIn = Array.isArray(body.characters) ? body.characters.slice(0, 500) : [];
+    const personasIn = Array.isArray(body.personas) ? body.personas.slice(0, remainingPersonas) : [];
+    const charactersIn = Array.isArray(body.characters) ? body.characters.slice(0, remainingChars) : [];
     const chatsIn = Array.isArray(body.chats) ? body.chats.slice(0, 1000) : [];
     const messagesIn = Array.isArray(body.messages) ? body.messages.slice(0, MAX_RESTORE_ITEMS) : [];
     const memoriesIn = Array.isArray(body.memories) ? body.memories.slice(0, 2000) : [];
@@ -144,7 +180,7 @@ export async function POST(req: NextRequest) {
     const storyCastIn = Array.isArray(body.story_cast) ? body.story_cast.slice(0, 2000) : [];
     const storyChaptersIn = Array.isArray(body.story_chapters) ? body.story_chapters.slice(0, 3000) : [];
 
-    // Validasi avatar & sampul sebelum masuk transaksi
+    // Validasi avatar, sampul, dan snapshot sebelum masuk transaksi agar IDOR /uploads dicegah
     const safeCharAvatars = new Map<number, string>();
     for (let i = 0; i < charactersIn.length; i++) {
       safeCharAvatars.set(i, await assertAvatarOwnership(charactersIn[i]?.avatar, user.id));
@@ -156,6 +192,14 @@ export async function POST(req: NextRequest) {
     const safeStoryCovers = new Map<number, string>();
     for (let i = 0; i < storiesIn.length; i++) {
       safeStoryCovers.set(i, await assertAvatarOwnership(storiesIn[i]?.cover_image, user.id));
+    }
+    const safeChatSnapshots = new Map<number, string | null>();
+    for (let i = 0; i < chatsIn.length; i++) {
+      safeChatSnapshots.set(i, await sanitizeSnapshotAvatar(chatsIn[i]?.character_snapshot, user.id));
+    }
+    const safeCastSnapshots = new Map<number, string | null>();
+    for (let i = 0; i < storyCastIn.length; i++) {
+      safeCastSnapshots.set(i, await sanitizeSnapshotAvatar(storyCastIn[i]?.character_snapshot, user.id));
     }
 
     const restored = await withTransaction(async (client) => {
@@ -279,9 +323,11 @@ export async function POST(req: NextRequest) {
         counts.characters++;
       }
 
-      for (const ch of chatsIn) {
+      for (let i = 0; i < chatsIn.length; i++) {
+        const ch = chatsIn[i];
         const mappedChar = ch?.character_id ? charMap.get(String(ch.character_id)) || null : null;
-        if (!mappedChar && !ch?.character_snapshot) continue;
+        const safeSnapshot = safeChatSnapshots.get(i) || null;
+        if (!mappedChar && !safeSnapshot) continue;
         const nid = newId('chat');
         if (ch.id) chatMap.set(String(ch.id), nid);
         const mappedPersona = ch.persona_id ? personaMap.get(String(ch.persona_id)) || null : null;
@@ -295,11 +341,11 @@ export async function POST(req: NextRequest) {
             nid,
             user.id,
             mappedChar,
-            ch.character_snapshot ? String(ch.character_snapshot) : null,
+            safeSnapshot,
             String(ch.title || 'Percakapan Dipulihkan').slice(0, 120),
             String(ch.summary || ''),
-            ch.temperature !== undefined && ch.temperature !== null ? Number(ch.temperature) : null,
-            ch.max_tokens !== undefined && ch.max_tokens !== null ? Number(ch.max_tokens) : null,
+            ch.temperature !== undefined && ch.temperature !== null ? clampTemperature(ch.temperature, 0.9) : null,
+            ch.max_tokens !== undefined && ch.max_tokens !== null ? clampMaxTokens(ch.max_tokens, 1024) : null,
             String(ch.reply_style || 'sedang'),
             mappedPersona,
             ch.persona_snapshot ? String(ch.persona_snapshot) : null,
@@ -371,8 +417,8 @@ export async function POST(req: NextRequest) {
             String(g.scenario || ''),
             String(g.turn_mode || 'auto'),
             mappedPersona,
-            Number(g.temperature || 0.9),
-            Number(g.max_tokens || 1024),
+            clampTemperature(g.temperature, 0.9),
+            clampMaxTokens(g.max_tokens, 1024),
           ]
         );
         counts.group_chats++;
@@ -443,10 +489,12 @@ export async function POST(req: NextRequest) {
         counts.stories++;
       }
 
-      for (const sc of storyCastIn) {
+      for (let i = 0; i < storyCastIn.length; i++) {
+        const sc = storyCastIn[i];
         const mappedStory = sc?.story_id ? storyMap.get(String(sc.story_id)) : null;
         if (!mappedStory || !sc?.name) continue;
         const mappedChar = sc.character_id ? charMap.get(String(sc.character_id)) || null : null;
+        const safeCastSnap = safeCastSnapshots.get(i) || null;
         await client.query(
           `INSERT INTO story_cast (id, story_id, character_id, character_snapshot, name, role_in_story, bio, current_state, sort_order)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -454,7 +502,7 @@ export async function POST(req: NextRequest) {
             newId('cst'),
             mappedStory,
             mappedChar,
-            sc.character_snapshot ? String(sc.character_snapshot) : null,
+            safeCastSnap,
             String(sc.name).slice(0, 80),
             String(sc.role_in_story || 'pendukung'),
             String(sc.bio || ''),

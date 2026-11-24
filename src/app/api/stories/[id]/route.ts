@@ -112,8 +112,8 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ id: str
       body.world_id !== undefined ? await resolveOwnedWorldId(user.id, body.world_id) : existing.world_id;
     const coverImage =
       body.cover_image !== undefined
-        ? await assertAvatarOwnership(body.cover_image, user.id)
-        : existing.cover_image;
+        ? await assertAvatarOwnership(body.cover_image, user.id, { allowExternal: visibility !== 'public' })
+        : await assertAvatarOwnership(existing.cover_image, user.id, { allowExternal: visibility !== 'public' });
 
     const nextCast = body.cast !== undefined ? await resolveCastEntries(user.id, body.cast) : null;
 

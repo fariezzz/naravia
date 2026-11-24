@@ -39,12 +39,58 @@ function isPublicBrowsePath(pathname: string): boolean {
   return false;
 }
 const PUBLIC_API = ['/api/auth/login', '/api/auth/register', '/api/auth/config', '/api/auth/logout', '/api/health'];
+const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function isSameOriginMutation(req: NextRequest, hasSession: boolean): boolean {
+  if (!MUTATION_METHODS.has(req.method.toUpperCase())) return true;
+
+  const secFetchSite = (req.headers.get('sec-fetch-site') || '').trim().toLowerCase();
+  if (secFetchSite === 'cross-site') return false;
+
+  const expectedHosts = new Set<string>();
+  const fwdHost = req.headers.get('x-forwarded-host')?.split(',')[0]?.trim().toLowerCase();
+  const hostHeader = req.headers.get('host')?.trim().toLowerCase();
+  const nextHost = req.nextUrl.host?.trim().toLowerCase();
+  if (fwdHost) expectedHosts.add(fwdHost);
+  if (hostHeader) expectedHosts.add(hostHeader);
+  if (nextHost) expectedHosts.add(nextHost);
+
+  const origin = req.headers.get('origin')?.trim();
+  if (origin) {
+    try {
+      const originHost = new URL(origin).host.toLowerCase();
+      return expectedHosts.has(originHost);
+    } catch {
+      return false;
+    }
+  }
+
+  const referer = req.headers.get('referer')?.trim();
+  if (referer) {
+    try {
+      const refHost = new URL(referer).host.toLowerCase();
+      return expectedHosts.has(refHost);
+    } catch {
+      return false;
+    }
+  }
+
+  // Permintaan mutasi ber-cookie dari browser seharusnya selalu menyertakan Origin/Referer
+  if (hasSession && secFetchSite !== 'same-origin') {
+    return false;
+  }
+
+  return true;
+}
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const hasSession = Boolean(req.cookies.get(SESSION_COOKIE)?.value);
 
   if (pathname.startsWith('/api/')) {
+    if (!isSameOriginMutation(req, hasSession)) {
+      return NextResponse.json({ error: 'Permintaan lintas-origin ditolak demi keamanan (CSRF).' }, { status: 403 });
+    }
     if (PUBLIC_API.includes(pathname)) return NextResponse.next();
     // Pembacaan karakter/cerita publik diizinkan tanpa sesi; handler-nya tetap
     // memanggil requireUser untuk PUT/DELETE/POST dan menolak item privat

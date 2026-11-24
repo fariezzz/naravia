@@ -37,8 +37,8 @@ async function resolveAccess(filename: string, userId: string | null): Promise<'
   if (!userId) return null;
 
   // Selain itu, hanya pemilik file, pemilik entitas yang memakainya,
-  // atau pemilik percakapan/cerita yang menyimpan snapshot dengan avatar tersebut
-  const quotedUrl = JSON.stringify(url);
+  // atau pemilik percakapan/cerita yang menyimpan snapshot dengan field avatar tersebut
+  const avatarFieldNeedle = `"avatar":${JSON.stringify(url)}`;
   const milik = await queryOne<{ cnt: number }>(
     `SELECT (
        (SELECT COUNT(*) FROM uploads WHERE filename = $1 AND user_id = $2) +
@@ -48,7 +48,7 @@ async function resolveAccess(filename: string, userId: string | null): Promise<'
        (SELECT COUNT(*) FROM chats WHERE user_id = $2 AND character_snapshot IS NOT NULL AND POSITION($4 IN character_snapshot) > 0) +
        (SELECT COUNT(*) FROM story_cast sc JOIN stories s ON s.id = sc.story_id WHERE s.user_id = $2 AND sc.character_snapshot IS NOT NULL AND POSITION($4 IN sc.character_snapshot) > 0)
      ) AS cnt`,
-    [filename, userId, url, quotedUrl]
+    [filename, userId, url, avatarFieldNeedle]
   );
   return Number(milik?.cnt || 0) > 0 ? 'pribadi' : null;
 }

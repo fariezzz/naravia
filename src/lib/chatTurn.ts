@@ -1,10 +1,10 @@
-import { buildCharacterSystemPrompt } from './character';
+import { buildCharacterSystemPrompt, isSuspiciousPromptInjection } from './character';
 import { CharacterRow, ChatRow, execute, MessageRow, queryOne } from './db';
 import { newId } from './ids';
 import { generateLLMResponse, LLMMessage } from './llm';
 import { getRelevantLore } from './lore';
 import { getRelevantMemories, saveMemoryEmbedding } from './memories';
-import { getUserSettings, resolveChatPersona } from './store';
+import { clampMaxTokens, clampTemperature, getUserSettings, resolveChatPersona } from './store';
 
 // Menyusun system prompt + riwayat pesan untuk satu giliran karakter (dipakai jalur stream dan non-stream)
 export async function buildTurnContext(params: {
@@ -82,10 +82,12 @@ export async function buildTurnContext(params: {
     });
   }
 
-  const baseTemp =
-    chat.temperature ?? character.temperature_override ?? (parseFloat(settings.temperature || '0.9') || 0.9);
+  const baseTemp = clampTemperature(
+    chat.temperature ?? character.temperature_override ?? settings.temperature,
+    0.9
+  );
   const temperature = isAlternativeVariation ? Math.min(1.15, baseTemp + 0.08) : baseTemp;
-  const maxTokens = chat.max_tokens ?? (parseInt(settings.max_tokens || '1024', 10) || 1024);
+  const maxTokens = clampMaxTokens(chat.max_tokens ?? settings.max_tokens, 1024);
 
   return {
     llmMessages,
@@ -223,7 +225,7 @@ export async function runBackgroundMemoryTasks(
         if (Array.isArray(parsed.facts)) {
           for (const f of parsed.facts.slice(0, 2)) {
             const content = String(f?.content || '').trim();
-            if (content.length <= 8) continue;
+            if (content.length <= 8 || isSuspiciousPromptInjection(content)) continue;
             const dup = await queryOne(
               'SELECT id FROM memories WHERE user_id = $1 AND character_id = $2 AND content = $3',
               [userId, character.id, content]
@@ -243,7 +245,7 @@ export async function runBackgroundMemoryTasks(
                 recentWindow[recentWindow.length - 1]?.id || null,
               ]
             );
-            saveMemoryEmbedding(memId, content).catch(() => undefined);
+            saveMemoryEmbedding(memId, content, userId).catch(() => undefined);
           }
         }
       }

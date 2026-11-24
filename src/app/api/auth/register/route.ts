@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSession, isValidEmail, normalizeEmail, setSessionCookie } from '@/lib/auth';
 import { queryOne, withTransaction } from '@/lib/db';
-import { getClientIp, handleApiError, jsonError, readJson } from '@/lib/http';
+import { getClientIp, handleApiError, HttpError, jsonError, readJson } from '@/lib/http';
 import { validatePasswordStrength } from '@/lib/password';
 import { checkRateLimit } from '@/lib/rateLimit';
 import { getSystemSettings, logAudit } from '@/lib/store';
@@ -18,14 +18,6 @@ export async function POST(req: NextRequest) {
     }
 
     const system = await getSystemSettings();
-    const userCount = await queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM users');
-    const isFirstUser = Number(userCount?.cnt || 0) === 0;
-
-    // Pendaftaran pertama selalu dibuka agar admin awal bisa dibuat tanpa akses server
-    if (!isFirstUser && system.registration_mode === 'closed') {
-      return jsonError('Pendaftaran akun baru sedang ditutup oleh admin.', 403);
-    }
-
     const body = await readJson(req);
     const email = normalizeEmail(body.email);
     const password = String(body.password || '');
@@ -38,13 +30,32 @@ export async function POST(req: NextRequest) {
     const passwordIssue = validatePasswordStrength(password);
     if (passwordIssue) return jsonError(passwordIssue, 400);
 
-    const exists = await queryOne<{ id: string }>('SELECT id FROM users WHERE email = $1', [email]);
-    if (exists) return jsonError('Email ini sudah terdaftar. Silakan masuk.', 409);
+    // Kunci transaksi advisory mencegah race condition promosi admin ganda saat instalasi baru
+    const { userId, role, isFirstUser } = await withTransaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(7240312)');
 
-    const role = isFirstUser ? 'admin' : 'user';
-    const userId = await withTransaction((client) =>
-      insertUserRecords(client, { email, password, displayName, role })
-    );
+      const userCount = await queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM users', [], client);
+      const firstUser = Number(userCount?.cnt || 0) === 0;
+
+      // Pendaftaran pertama selalu dibuka agar admin awal bisa dibuat tanpa akses server
+      if (!firstUser && system.registration_mode === 'closed') {
+        throw new HttpError(403, 'Pendaftaran akun baru sedang ditutup oleh admin.');
+      }
+
+      const exists = await queryOne<{ id: string }>('SELECT id FROM users WHERE email = $1', [email], client);
+      if (exists) {
+        throw new HttpError(409, 'Email ini sudah terdaftar. Silakan masuk.');
+      }
+
+      const assignedRole = firstUser ? 'admin' : 'user';
+      const newUserId = await insertUserRecords(client, {
+        email,
+        password,
+        displayName,
+        role: assignedRole,
+      });
+      return { userId: newUserId, role: assignedRole, isFirstUser: firstUser };
+    });
 
     await logAudit({ userId, actorEmail: email, action: isFirstUser ? 'daftar_admin_pertama' : 'daftar', ip });
 

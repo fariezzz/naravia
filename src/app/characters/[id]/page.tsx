@@ -385,15 +385,21 @@ export default function CharacterProfilePage() {
               </h1>
               <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{character.tagline}</p>
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                {character.world_name && (
-                  <Link
-                    href="/worlds"
-                    className="px-2.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 text-xs font-medium inline-flex items-center gap-1"
-                  >
-                    <Globe className="w-3 h-3" />
-                    <span>{character.world_name}</span>
-                  </Link>
-                )}
+                {character.world_name &&
+                  (character.is_owner ? (
+                    <Link
+                      href="/worlds"
+                      className="px-2.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 text-xs font-medium inline-flex items-center gap-1"
+                    >
+                      <Globe className="w-3 h-3" />
+                      <span>{character.world_name}</span>
+                    </Link>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 text-xs font-medium inline-flex items-center gap-1">
+                      <Globe className="w-3 h-3" />
+                      <span>{character.world_name}</span>
+                    </span>
+                  ))}
                 {(character.tags || []).map((tag: string) => (
                   <span
                     key={tag}
@@ -648,20 +654,33 @@ export default function CharacterProfilePage() {
                 <span className="font-semibold text-slate-900 dark:text-slate-100 block mb-0.5">Deskripsi</span>
                 <p className="whitespace-pre-line">{character.description || '-'}</p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <div>
-                  <span className="font-semibold text-slate-900 dark:text-slate-100 block mb-0.5">Kepribadian</span>
-                  <p className="whitespace-pre-line">{character.personality || '-'}</p>
+              {character.prompt_hidden ? (
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    Detail kepribadian, gaya bicara, dan skenario dikunci oleh pembuat (Remix nonaktif).
+                  </span>
                 </div>
-                <div>
-                  <span className="font-semibold text-slate-900 dark:text-slate-100 block mb-0.5">Gaya Bicara</span>
-                  <p className="whitespace-pre-line">{character.speaking_style || '-'}</p>
-                </div>
-              </div>
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                <span className="font-semibold text-slate-900 dark:text-slate-100 block mb-0.5">Latar & Situasi Awal</span>
-                <p className="whitespace-pre-line">{character.scenario || '-'}</p>
-              </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <div>
+                      <span className="font-semibold text-slate-900 dark:text-slate-100 block mb-0.5">Kepribadian</span>
+                      <p className="whitespace-pre-line">{character.personality || '-'}</p>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900 dark:text-slate-100 block mb-0.5">Gaya Bicara</span>
+                      <p className="whitespace-pre-line">{character.speaking_style || '-'}</p>
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <span className="font-semibold text-slate-900 dark:text-slate-100 block mb-0.5">
+                      Latar & Situasi Awal
+                    </span>
+                    <p className="whitespace-pre-line">{character.scenario || '-'}</p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

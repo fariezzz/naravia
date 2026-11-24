@@ -2,10 +2,10 @@ import { NextRequest } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { StoryRevisionRow, queryOne, withTransaction } from '@/lib/db';
 import { parseJsonSafe } from '@/lib/format';
-import { handleApiError, readJson } from '@/lib/http';
+import { handleApiError, readJson, redactInternalDetails } from '@/lib/http';
 import { newId } from '@/lib/ids';
 import { cleanStoryOutput, countWords, streamLLMResponse } from '@/lib/llm';
-import { enforceRateLimit } from '@/lib/rateLimit';
+import { enforceLlmRateLimit, enforceRateLimit } from '@/lib/rateLimit';
 import { formatStoryRevision, loadStoryGenerationBundle, triggerBackgroundChapterSummaries } from '@/lib/storyHelpers';
 import { buildStoryContinueMessages, getStoryMaxTokens } from '@/lib/storyPrompt';
 
@@ -26,6 +26,7 @@ export async function POST(
 ) {
   try {
     const user = await requireUser(req);
+    enforceLlmRateLimit(user.id);
     enforceRateLimit(`story-generate:${user.id}`, 45, 60 * 60_000);
 
     const { id: storyId, chapterId } = await context.params;
@@ -193,7 +194,10 @@ export async function POST(
             });
           } else {
             sendEvent('error', {
-              message: err instanceof Error ? err.message : 'Gagal menghasilkan lanjutan cerita.',
+              message:
+                err instanceof Error
+                  ? redactInternalDetails(err.message)
+                  : 'Gagal menghasilkan lanjutan cerita.',
             });
           }
         } finally {

@@ -17,10 +17,22 @@ function getBuckets(): Map<string, Bucket> {
   return global.__naraviaRateBuckets;
 }
 
+const MAX_BUCKETS = 10_000;
+
 function sweep(buckets: Map<string, Bucket>, now: number) {
   if (buckets.size < 5000) return;
   for (const [k, b] of buckets) {
     if (b.resetAt <= now) buckets.delete(k);
+  }
+  // Cegah pertumbuhan heap tak terbatas bila banyak kunci baru masuk dalam satu jendela TTL
+  if (buckets.size >= MAX_BUCKETS) {
+    const toEvict = buckets.size - Math.floor(MAX_BUCKETS * 0.8);
+    let evicted = 0;
+    for (const k of buckets.keys()) {
+      buckets.delete(k);
+      evicted += 1;
+      if (evicted >= toEvict) break;
+    }
   }
 }
 

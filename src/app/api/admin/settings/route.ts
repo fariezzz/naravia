@@ -7,8 +7,17 @@ import { generateLLMResponse } from '@/lib/llm';
 import { performOptionalWebSearch } from '@/lib/research';
 import { maskSecret, SECRET_SETTING_KEYS, SYSTEM_SETTING_KEYS } from '@/lib/settingsKeys';
 import { getSystemSettings, logAudit, updateSystemSettings } from '@/lib/store';
+import { assertSafeProviderUrl, isSameOriginUrl } from '@/lib/urlSafety';
 
 export const runtime = 'nodejs';
+
+const URL_SETTING_KEYS = [
+  'llm_base_url',
+  'fallback_llm_base_url',
+  'research_llm_base_url',
+  'embedding_base_url',
+  'ollama_base_url',
+] as const;
 
 // Setelan global (provider AI, kunci API, pendaftaran, kuota bawaan). Khusus admin.
 async function buildResponse() {
@@ -66,6 +75,32 @@ export async function PUT(req: NextRequest) {
     if (updates.search_provider !== undefined && !['model', 'tavily', 'brave'].includes(updates.search_provider)) {
       updates.search_provider = 'model';
     }
+    if (updates.safety_filter_mode !== undefined && !['standard', 'relaxed'].includes(updates.safety_filter_mode)) {
+      updates.safety_filter_mode = 'standard';
+    }
+
+    // Validasi seluruh URL provider terhadap target SSRF (metadata cloud / jaringan internal terlarang)
+    for (const urlKey of URL_SETTING_KEYS) {
+      if (updates[urlKey]) {
+        await assertSafeProviderUrl(updates[urlKey]);
+      }
+    }
+
+    // Cegah penyimpanan API key baru secara plaintext di produksi bila enkripsi belum aktif
+    const savingNonEmptySecret = Object.entries(updates).some(
+      ([k, v]) => SECRET_SETTING_KEYS.has(k) && Boolean(v)
+    );
+    if (
+      savingNonEmptySecret &&
+      process.env.NODE_ENV === 'production' &&
+      !isSettingsEncryptionEnabled() &&
+      process.env.ALLOW_PLAINTEXT_SETTINGS !== 'true'
+    ) {
+      return jsonError(
+        'SETTINGS_ENCRYPTION_KEY belum diatur di server produksi. Atur variabel tersebut terlebih dahulu sebelum menyimpan kunci API ke database.',
+        400
+      );
+    }
 
     await updateSystemSettings(updates);
     await logAudit({
@@ -91,10 +126,13 @@ export async function POST(req: NextRequest) {
     if (body.action === 'fetch_models') {
       const rawBaseUrl = String(body.baseUrl || system.llm_base_url || '').trim().replace(/\/+$/, '');
       if (!rawBaseUrl) return jsonError('Base URL belum diisi.', 400);
-      if (!/^https?:\/\//i.test(rawBaseUrl)) return jsonError('Base URL harus diawali http:// atau https://', 400);
+      await assertSafeProviderUrl(rawBaseUrl);
 
-      const rawKey =
-        body.apiKey && !String(body.apiKey).includes('••••') ? String(body.apiKey).trim() : system.llm_api_key || '';
+      const providedApiKey =
+        body.apiKey && !String(body.apiKey).includes('••••') ? String(body.apiKey).trim() : '';
+      // Jangan pernah kirim kunci API tersimpan ke host/origin yang berbeda dari llm_base_url tersimpan
+      const canReuseStoredKey = !body.baseUrl || isSameOriginUrl(rawBaseUrl, system.llm_base_url);
+      const rawKey = providedApiKey || (canReuseStoredKey ? system.llm_api_key || '' : '');
 
       let modelsEndpoint = rawBaseUrl;
       if (!modelsEndpoint.endsWith('/models')) {
@@ -106,7 +144,12 @@ export async function POST(req: NextRequest) {
 
       const headers: Record<string, string> = {};
       if (rawKey) headers.Authorization = `Bearer ${rawKey}`;
-      const res = await fetch(modelsEndpoint, { headers, signal: AbortSignal.timeout(15000) });
+      // Tolak HTTP redirect agar Authorization header tidak bocor ke domain lain
+      const res = await fetch(modelsEndpoint, {
+        headers,
+        redirect: 'error',
+        signal: AbortSignal.timeout(15000),
+      });
       if (!res.ok) return jsonError(`Gagal memuat daftar model (${res.status}).`, 400);
 
       const data = await res.json();

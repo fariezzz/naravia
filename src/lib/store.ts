@@ -81,6 +81,41 @@ export async function getSettingsMap(userId: string): Promise<Record<string, str
 
 // ===================== Kuota Token =====================
 
+const MAX_CONCURRENT_LLM_PER_USER = 4;
+
+interface ActiveLlmSlot {
+  count: number;
+  reservedTokens: number;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __naraviaActiveLlmSlots: Map<string, ActiveLlmSlot> | undefined;
+}
+
+function getActiveLlmSlots(): Map<string, ActiveLlmSlot> {
+  if (!global.__naraviaActiveLlmSlots) {
+    global.__naraviaActiveLlmSlots = new Map();
+  }
+  return global.__naraviaActiveLlmSlots;
+}
+
+export function clampMaxTokens(raw: unknown, fallback = 1024): number {
+  const n = Number(raw);
+  if (raw === '' || raw === null || raw === undefined || !Number.isFinite(n)) {
+    return fallback;
+  }
+  return Math.min(8192, Math.max(64, Math.round(n)));
+}
+
+export function clampTemperature(raw: unknown, fallback = 0.9): number {
+  const n = Number(raw);
+  if (raw === '' || raw === null || raw === undefined || !Number.isFinite(n)) {
+    return fallback;
+  }
+  return Math.min(2, Math.max(0, n));
+}
+
 export async function recordTokenUsage(params: {
   userId: string;
   characterId?: string | null;
@@ -137,12 +172,85 @@ export async function assertTokenBudget(userId: string): Promise<void> {
   const budget = await getEffectiveDailyBudget(userId);
   if (budget <= 0) return;
   const { used } = await getTodayTokenUsage(userId);
-  if (used >= budget) {
+  const active = getActiveLlmSlots().get(userId);
+  const projected = used + (active?.reservedTokens || 0);
+  if (projected >= budget) {
     throw new HttpError(
       429,
       `Kuota token harian kamu sudah habis (${used.toLocaleString('id-ID')} dari ${budget.toLocaleString('id-ID')}). Kuota akan diperbarui besok.`
     );
   }
+}
+
+/**
+ * Mengunci slot kuota & konkurensi LLM per pengguna secara atomik sebelum request dikirim
+ * ke provider AI, mencegah race condition (TOCTOU) dari banyak request paralel.
+ */
+export async function acquireTokenBudgetSlot(
+  userId: string,
+  reserveTokens: number
+): Promise<() => void> {
+  const slots = getActiveLlmSlots();
+  const current = slots.get(userId) || { count: 0, reservedTokens: 0 };
+
+  if (current.count >= MAX_CONCURRENT_LLM_PER_USER) {
+    throw new HttpError(
+      429,
+      'Terlalu banyak permintaan AI yang sedang berjalan bersamaan. Tunggu salah satunya selesai.'
+    );
+  }
+
+  const budget = await getEffectiveDailyBudget(userId);
+  const safeReserve = Math.max(0, Math.min(16384, Math.round(reserveTokens || 0)));
+
+  if (budget > 0) {
+    const { used } = await getTodayTokenUsage(userId);
+    // Baca ulang slot setelah await DB agar kondisi balapan paralel tetap terdeteksi
+    const latest = slots.get(userId) || { count: 0, reservedTokens: 0 };
+    if (latest.count >= MAX_CONCURRENT_LLM_PER_USER) {
+      throw new HttpError(
+        429,
+        'Terlalu banyak permintaan AI yang sedang berjalan bersamaan. Tunggu salah satunya selesai.'
+      );
+    }
+    if (used + latest.reservedTokens >= budget) {
+      throw new HttpError(
+        429,
+        `Kuota token harian kamu sudah habis (${used.toLocaleString('id-ID')} dari ${budget.toLocaleString('id-ID')}). Kuota akan diperbarui besok.`
+      );
+    }
+    slots.set(userId, {
+      count: latest.count + 1,
+      reservedTokens: latest.reservedTokens + safeReserve,
+    });
+  } else {
+    const latest = slots.get(userId) || { count: 0, reservedTokens: 0 };
+    if (latest.count >= MAX_CONCURRENT_LLM_PER_USER) {
+      throw new HttpError(
+        429,
+        'Terlalu banyak permintaan AI yang sedang berjalan bersamaan. Tunggu salah satunya selesai.'
+      );
+    }
+    slots.set(userId, {
+      count: latest.count + 1,
+      reservedTokens: latest.reservedTokens + safeReserve,
+    });
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const latest = slots.get(userId);
+    if (!latest) return;
+    const nextCount = Math.max(0, latest.count - 1);
+    const nextReserved = Math.max(0, latest.reservedTokens - safeReserve);
+    if (nextCount === 0) {
+      slots.delete(userId);
+    } else {
+      slots.set(userId, { count: nextCount, reservedTokens: nextReserved });
+    }
+  };
 }
 
 // ===================== Persona =====================

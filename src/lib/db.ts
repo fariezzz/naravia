@@ -1,5 +1,5 @@
 import { Pool, PoolClient, QueryResultRow, types } from 'pg';
-import { encryptSecret } from './crypto';
+import { encryptSecret, isSettingsEncryptionEnabled } from './crypto';
 import { MIGRATIONS_SQL, SCHEMA_SQL } from './schema.mjs';
 import { SECRET_SETTING_KEYS, systemDefaultsFromEnv } from './settingsKeys';
 import { insertUserRecords } from './userRecords';
@@ -297,7 +297,13 @@ async function initializeDatabase(): Promise<void> {
     await client.query(MIGRATIONS_SQL);
 
     const defaults = systemDefaultsFromEnv();
+    const encryptionEnabled = isSettingsEncryptionEnabled();
     for (const [k, v] of Object.entries(defaults)) {
+      // Jangan menyalin kunci API dari .env ke DB dalam plaintext jika SETTINGS_ENCRYPTION_KEY belum diatur;
+      // runtime LLM & search tetap membaca fallback dari process.env di memori.
+      if (SECRET_SETTING_KEYS.has(k) && v && !encryptionEnabled) {
+        continue;
+      }
       const stored = SECRET_SETTING_KEYS.has(k) && v ? encryptSecret(v) : v;
       await client.query(
         'INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',

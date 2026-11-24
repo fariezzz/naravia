@@ -93,6 +93,7 @@ export default function StoryCover({
         <img
           src={coverImage}
           alt={title}
+          referrerPolicy="no-referrer"
           onError={() => setImgFailed(true)}
           className="w-full h-full object-cover"
         />

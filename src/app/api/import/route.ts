@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
-import { ensureUploadsDir, MAX_UPLOAD_BYTES } from '@/lib/assets';
+import { assertUserUploadQuota, ensureUploadsDir, MAX_UPLOAD_BYTES } from '@/lib/assets';
 import { requireUser } from '@/lib/auth';
 import { handleApiError, jsonError } from '@/lib/http';
 import { newId } from '@/lib/ids';
@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
         return jsonError('File bukan gambar PNG yang valid.', 400);
       }
       rawJson = extractCharacterJsonFromPng(buffer);
+      await assertUserUploadQuota(user.id, buffer.length);
 
       // Simpan gambar kartu sebagai avatar karakter milik pengguna
       const avatarFileName = `${newId('card')}.png`;

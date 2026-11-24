@@ -7,6 +7,8 @@ import { generateLLMResponse } from '@/lib/llm';
 import { sanitizeMemoryForClient } from '@/lib/memories';
 import { enforceLlmRateLimit } from '@/lib/rateLimit';
 import {
+  clampMaxTokens,
+  clampTemperature,
   formatPersona,
   getAllPersonas,
   getDefaultPersona,
@@ -72,6 +74,15 @@ export async function GET(req: NextRequest, context: Ctx) {
       return jsonError('Karakter untuk percakapan ini tidak ditemukan.', 404);
     }
 
+    // Pastikan status kepemilikan karakter sebelum mengekspos detail prompt ke klien
+    let isCharacterOwner = false;
+    if (chat.character_id) {
+      const liveChar = await queryOne<{ user_id: string }>('SELECT user_id FROM characters WHERE id = $1', [
+        chat.character_id,
+      ]);
+      isCharacterOwner = Boolean(liveChar && liveChar.user_id === user.id);
+    }
+
     // Nama dunia hanya relevan bila karakternya masih ada
     if (chat.character_id && character.world_id) {
       const world = await queryOne<{ name: string }>('SELECT name FROM worlds WHERE id = $1', [character.world_id]);
@@ -96,8 +107,9 @@ export async function GET(req: NextRequest, context: Ctx) {
       ? await getPersonaById(user.id, chat.persona_id)
       : await getDefaultPersona(user.id);
 
+    const { character_snapshot: _cs, persona_snapshot: _ps, ...publicChat } = stripOwner(chat);
     const resolvedChat = {
-      ...stripOwner(chat),
+      ...publicChat,
       persona_id: chat.persona_id || activePersona?.id || null,
       use_latest_persona: Boolean(chat.use_latest_persona),
       temperature: chat.temperature ?? character.temperature_override ?? (parseFloat(settings.temperature || '0.9') || 0.9),
@@ -107,7 +119,7 @@ export async function GET(req: NextRequest, context: Ctx) {
 
     return NextResponse.json({
       chat: resolvedChat,
-      character: formatCharacterRow(character),
+      character: formatCharacterRow(character, { isOwner: isCharacterOwner }),
       // Klien memakai ini untuk menonaktifkan kolom pesan pada percakapan yang karakternya sudah dihapus
       characterDeleted,
       messages: pageRows.map(formatMessageRow),
@@ -190,13 +202,13 @@ export async function PATCH(req: NextRequest, context: Ctx) {
       body.temperature !== undefined
         ? body.temperature === null || body.temperature === ''
           ? null
-          : Number(body.temperature)
+          : clampTemperature(body.temperature, 0.9)
         : existing.temperature;
     const maxTokens =
       body.max_tokens !== undefined
         ? body.max_tokens === null || body.max_tokens === ''
           ? null
-          : Number(body.max_tokens)
+          : clampMaxTokens(body.max_tokens, 1024)
         : existing.max_tokens;
     const replyStyle = body.reply_style !== undefined ? String(body.reply_style) : existing.reply_style;
 

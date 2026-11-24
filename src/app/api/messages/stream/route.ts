@@ -113,6 +113,17 @@ export async function POST(req: NextRequest) {
     const finalCharacter = character;
     const finalCharMessageId = charMessageId as string;
     const regenerating = isRegenerate;
+    // Hanya pemilik karakter yang boleh melihat metadata lorebook pribadinya
+    const isCharOwner = Boolean(
+      finalChat.character_id &&
+        (await queryOne<{ id: string }>('SELECT id FROM characters WHERE id = $1 AND user_id = $2', [
+          finalChat.character_id,
+          user.id,
+        ]))
+    );
+    const exposedLore = isCharOwner
+      ? matchedLore.map((l) => ({ id: l.id, title: l.title, matchedKeywords: l.matchedKeywords }))
+      : [];
 
     // Simpan teks akhir: alternatif baru (regenerate) atau isi pesan baru
     const persistContent = async (content: string) => {
@@ -152,7 +163,7 @@ export async function POST(req: NextRequest) {
               characterMessageId: finalCharMessageId,
               isRegenerate: regenerating,
               userMessage: userMessageRow ? formatMessageRow(userMessageRow) : null,
-              matchedLore: matchedLore.map((l) => ({ id: l.id, title: l.title, matchedKeywords: l.matchedKeywords })),
+              matchedLore: exposedLore,
             })
           );
 

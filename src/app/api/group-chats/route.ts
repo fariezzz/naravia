@@ -4,7 +4,7 @@ import { CharacterRow, GroupChatRow, query, queryOne, withTransaction } from '@/
 import { stripOwner } from '@/lib/format';
 import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
-import { getDefaultPersona, getPersonaById, getUserSettings } from '@/lib/store';
+import { clampMaxTokens, clampTemperature, getDefaultPersona, getPersonaById, getUserSettings } from '@/lib/store';
 
 export const runtime = 'nodejs';
 
@@ -69,14 +69,18 @@ export async function POST(req: NextRequest) {
     const persona = body.personaId
       ? await getPersonaById(user.id, String(body.personaId))
       : await getDefaultPersona(user.id);
-    const temp =
+    const temp = clampTemperature(
       body.temperature !== undefined && body.temperature !== null && body.temperature !== ''
-        ? Number(body.temperature)
-        : parseFloat(settings.temperature || '0.9') || 0.9;
-    const maxTokens =
+        ? body.temperature
+        : settings.temperature,
+      0.9
+    );
+    const maxTokens = clampMaxTokens(
       body.maxTokens !== undefined && body.maxTokens !== null && body.maxTokens !== ''
-        ? Number(body.maxTokens)
-        : parseInt(settings.max_tokens || '1024', 10) || 1024;
+        ? body.maxTokens
+        : settings.max_tokens,
+      1024
+    );
     const turnMode = ['auto', 'mentioned', 'round_robin'].includes(body.turn_mode) ? body.turn_mode : 'auto';
 
     const id = newId('gchat');

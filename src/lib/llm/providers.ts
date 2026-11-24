@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import { sanitizePromptFragment } from '../character';
 import { cleanCharacterOutput, cleanRawOutput, cleanStoryOutput, estimateTokens } from './cleaner';
 import { LLMMessage, LLMOutputMode, LLMProtocol, LLMResponse, ProviderEndpoint, StreamOutcome } from './types';
 
@@ -9,13 +11,19 @@ function applyOutputCleaner(raw: string, mode: LLMOutputMode = 'character'): str
 
 export const DEFAULT_LLM_TIMEOUT_MS = 90_000;
 
-const GOOGLE_SAFETY_SETTINGS = [
-  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-  { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
-];
+export function getGoogleSafetySettings(mode: string = 'standard') {
+  const isRelaxed = mode === 'relaxed';
+  return [
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+    {
+      category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+      threshold: isRelaxed ? 'BLOCK_NONE' : 'BLOCK_ONLY_HIGH',
+    },
+    { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+  ];
+}
 
 export function resolveProtocol(providerSetting: string, baseUrl: string): LLMProtocol {
   const urlLower = baseUrl.toLowerCase();
@@ -62,19 +70,24 @@ function buildOpenAIEndpoint(baseUrl: string): string {
   return endpoint;
 }
 
-function inlineSystemMessages(messages: LLMMessage[]): LLMMessage[] {
+export function inlineSystemMessages(messages: LLMMessage[]): LLMMessage[] {
   const sysText = messages
     .filter((m) => m.role === 'system')
     .map((m) => m.content.trim())
     .filter(Boolean)
     .join('\n\n');
-  const nonSys = messages.filter((m) => m.role !== 'system');
+  const nonSys = messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => (m.role === 'user' ? { ...m, content: sanitizePromptFragment(m.content) } : m));
   if (!sysText) return messages;
+  const nonce = randomBytes(4).toString('hex');
+  const openTag = `[INSTRUKSI_SISTEM_${nonce}]`;
+  const closeTag = `[AKHIR_INSTRUKSI_SISTEM_${nonce}]`;
   if (nonSys.length > 0 && nonSys[0].role === 'user') {
     return [
       {
         role: 'user',
-        content: `[INSTRUKSI SISTEM]\n${sysText}\n[AKHIR INSTRUKSI SISTEM]\n\n${nonSys[0].content}`,
+        content: `${openTag}\n${sysText}\n${closeTag}\n\n${nonSys[0].content}`,
       },
       ...nonSys.slice(1),
     ];
@@ -82,7 +95,7 @@ function inlineSystemMessages(messages: LLMMessage[]): LLMMessage[] {
   return [
     {
       role: 'user',
-      content: `[INSTRUKSI SISTEM]\n${sysText}\n[AKHIR INSTRUKSI SISTEM]`,
+      content: `${openTag}\n${sysText}\n${closeTag}`,
     },
     ...nonSys,
   ];
@@ -99,7 +112,8 @@ function buildGoogleContents(messages: LLMMessage[], inlineSystem: boolean) {
   const rawTurns: Array<{ role: 'user' | 'model'; text: string }> = [];
   for (const msg of conversationMessages) {
     const mappedRole = msg.role === 'assistant' ? 'model' : 'user';
-    const content = (msg.content || '').trim();
+    const rawContent = (msg.content || '').trim();
+    const content = mappedRole === 'user' && inlineSystem ? sanitizePromptFragment(rawContent) : rawContent;
     if (!content) continue;
     if (rawTurns.length > 0 && rawTurns[rawTurns.length - 1].role === mappedRole) {
       rawTurns[rawTurns.length - 1].text += `\n\n${content}`;
@@ -113,12 +127,15 @@ function buildGoogleContents(messages: LLMMessage[], inlineSystem: boolean) {
   }
 
   if (inlineSystem && systemText) {
+    const nonce = randomBytes(4).toString('hex');
+    const openTag = `[INSTRUKSI_SISTEM_${nonce}]`;
+    const closeTag = `[AKHIR_INSTRUKSI_SISTEM_${nonce}]`;
     if (rawTurns[0].role === 'user') {
-      rawTurns[0].text = `[INSTRUKSI SISTEM]\n${systemText}\n[AKHIR INSTRUKSI SISTEM]\n\n${rawTurns[0].text}`;
+      rawTurns[0].text = `${openTag}\n${systemText}\n${closeTag}\n\n${rawTurns[0].text}`;
     } else {
       rawTurns.unshift({
         role: 'user',
-        text: `[INSTRUKSI SISTEM]\n${systemText}\n[AKHIR INSTRUKSI SISTEM]`,
+        text: `${openTag}\n${systemText}\n${closeTag}`,
       });
     }
   } else if (rawTurns[0].role === 'model') {
@@ -143,7 +160,14 @@ function combineSignals(timeoutMs: number, externalSignal?: AbortSignal): AbortS
 export async function callProvider(
   endpointCfg: ProviderEndpoint,
   messages: LLMMessage[],
-  params: { temperature: number; maxTokens: number; jsonMode?: boolean; outputMode?: LLMOutputMode; timeoutMs?: number }
+  params: {
+    temperature: number;
+    maxTokens: number;
+    jsonMode?: boolean;
+    outputMode?: LLMOutputMode;
+    timeoutMs?: number;
+    safetyFilterMode?: string;
+  }
 ): Promise<LLMResponse> {
   const timeoutMs = params.timeoutMs || DEFAULT_LLM_TIMEOUT_MS;
   const outputMode = params.outputMode || (params.jsonMode ? 'raw' : 'character');
@@ -162,6 +186,7 @@ export async function callProvider(
       jsonMode: params.jsonMode,
       outputMode,
       timeoutMs,
+      safetyFilterMode: params.safetyFilterMode,
     });
   }
   if (endpointCfg.protocol === 'ollama_native') {
@@ -298,6 +323,7 @@ async function callGoogleAIStudio(
     jsonMode?: boolean;
     outputMode: LLMOutputMode;
     timeoutMs: number;
+    safetyFilterMode?: string;
   }
 ): Promise<LLMResponse> {
   const cleanBase = (params.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').trim().replace(/\/+$/, '');
@@ -315,9 +341,7 @@ async function callGoogleAIStudio(
     const tryStrategies = isGemma ? [true, false] : [false, true];
 
     for (const inlineSystem of tryStrategies) {
-      const url = `${baseWithVersion}/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(
-        params.apiKey
-      )}`;
+      const url = `${baseWithVersion}/models/${encodeURIComponent(modelName)}:generateContent`;
 
       const generationConfig: Record<string, unknown> = {
         temperature: params.temperature,
@@ -332,7 +356,7 @@ async function callGoogleAIStudio(
       const payload: Record<string, unknown> = {
         contents,
         generationConfig,
-        safetySettings: GOOGLE_SAFETY_SETTINGS,
+        safetySettings: getGoogleSafetySettings(params.safetyFilterMode),
       };
       if (!inlineSystem && systemText) {
         payload.systemInstruction = { parts: [{ text: systemText }] };
@@ -342,7 +366,10 @@ async function callGoogleAIStudio(
       try {
         res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': params.apiKey,
+          },
           signal: AbortSignal.timeout(params.timeoutMs),
           body: JSON.stringify(payload),
         });
@@ -490,7 +517,13 @@ async function callOllama(
 export async function* streamFromProvider(
   endpointCfg: ProviderEndpoint,
   messages: LLMMessage[],
-  params: { temperature: number; maxTokens: number; signal?: AbortSignal; timeoutMs?: number }
+  params: {
+    temperature: number;
+    maxTokens: number;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    safetyFilterMode?: string;
+  }
 ): AsyncGenerator<string, StreamOutcome, void> {
   let accumulated = '';
   let modelUsed = endpointCfg.model;
@@ -502,14 +535,12 @@ export async function* streamFromProvider(
     const cleanBase = endpointCfg.baseUrl.replace(/\/+$/, '');
     const baseWithVer = cleanBase.includes('/v1') ? cleanBase : `${cleanBase}/v1beta`;
     const isGemma = endpointCfg.model.toLowerCase().includes('gemma');
-    const url = `${baseWithVer}/models/${encodeURIComponent(endpointCfg.model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(
-      endpointCfg.apiKey
-    )}`;
+    const url = `${baseWithVer}/models/${encodeURIComponent(endpointCfg.model)}:streamGenerateContent?alt=sse`;
 
     const { systemText, contents } = buildGoogleContents(messages, isGemma);
     const body: Record<string, unknown> = {
       contents,
-      safetySettings: GOOGLE_SAFETY_SETTINGS,
+      safetySettings: getGoogleSafetySettings(params.safetyFilterMode),
       generationConfig: {
         temperature: params.temperature,
         maxOutputTokens: params.maxTokens,
@@ -521,7 +552,10 @@ export async function* streamFromProvider(
 
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': endpointCfg.apiKey,
+      },
       signal,
       body: JSON.stringify(body),
     });

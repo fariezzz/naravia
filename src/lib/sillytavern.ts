@@ -162,6 +162,9 @@ export function mapCardJsonToNaravia(rawJson: Record<string, any>, userName = 'K
   };
 }
 
+const MAX_PNG_METADATA_CHUNK_BYTES = 1 * 1024 * 1024; // 1 MB chunk terkompresi/mentah
+const MAX_PNG_INFLATED_BYTES = 2 * 1024 * 1024; // 2 MB hasil dekompresi (mencegah zlib bomb)
+
 /**
  * Mengekstrak metadata JSON karakter dari chunk tEXt / iTXt / zTXt pada file PNG SillyTavern
  */
@@ -185,8 +188,11 @@ export function extractCharacterJsonFromPng(buffer: Buffer): Record<string, any>
       const nullIndex = chunkData.indexOf(0);
       if (nullIndex !== -1) {
         const keyword = chunkData.subarray(0, nullIndex).toString('latin1').toLowerCase();
-        const textVal = chunkData.subarray(nullIndex + 1).toString('latin1');
         if (keyword === 'chara' || keyword === 'ccv3') {
+          if (chunkData.length > MAX_PNG_METADATA_CHUNK_BYTES) {
+            throw new Error('Metadata kartu karakter pada gambar PNG terlalu besar.');
+          }
+          const textVal = chunkData.subarray(nullIndex + 1).toString('latin1');
           const decoded = Buffer.from(textVal, 'base64').toString('utf8');
           return JSON.parse(decoded);
         }
@@ -196,8 +202,18 @@ export function extractCharacterJsonFromPng(buffer: Buffer): Record<string, any>
       if (nullIndex !== -1) {
         const keyword = chunkData.subarray(0, nullIndex).toString('latin1').toLowerCase();
         if (keyword === 'chara' || keyword === 'ccv3') {
+          if (chunkData.length > MAX_PNG_METADATA_CHUNK_BYTES) {
+            throw new Error('Metadata terkompresi kartu karakter PNG terlalu besar.');
+          }
           const compressed = chunkData.subarray(nullIndex + 2);
-          const inflated = zlib.inflateSync(compressed).toString('utf8');
+          let inflated: string;
+          try {
+            inflated = zlib
+              .inflateSync(compressed, { maxOutputLength: MAX_PNG_INFLATED_BYTES })
+              .toString('utf8');
+          } catch {
+            throw new Error('Metadata terkompresi PNG rusak atau melampaui batas ukuran aman.');
+          }
           const decoded = Buffer.from(inflated, 'base64').toString('utf8');
           return JSON.parse(decoded);
         }
@@ -207,6 +223,9 @@ export function extractCharacterJsonFromPng(buffer: Buffer): Record<string, any>
       if (nullIndex !== -1) {
         const keyword = chunkData.subarray(0, nullIndex).toString('utf8').toLowerCase();
         if (keyword === 'chara' || keyword === 'ccv3') {
+          if (chunkData.length > MAX_PNG_METADATA_CHUNK_BYTES) {
+            throw new Error('Metadata kartu karakter PNG terlalu besar.');
+          }
           const rest = chunkData.subarray(nullIndex + 3);
           const lastNull = rest.lastIndexOf(0);
           const textVal = (lastNull !== -1 ? rest.subarray(lastNull + 1) : rest).toString('utf8');

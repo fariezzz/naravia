@@ -3,7 +3,7 @@ import { requireUser } from '@/lib/auth';
 import { queryOne, UserPersonaRow } from '@/lib/db';
 import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { generateLLMResponse } from '@/lib/llm';
-import { enforceRateLimit } from '@/lib/rateLimit';
+import { enforceLlmRateLimit, enforceRateLimit } from '@/lib/rateLimit';
 import { buildPersonaCastBio, extractJsonObject, sanitizeGenre, sanitizeTags } from '@/lib/storyHelpers';
 import { buildStoryBrainstormMessages } from '@/lib/storyPrompt';
 
@@ -13,6 +13,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser(req);
+    enforceLlmRateLimit(user.id);
     enforceRateLimit(`story-brainstorm:${user.id}`, 15, 60 * 60_000);
 
     const body = await readJson(req);

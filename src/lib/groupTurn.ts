@@ -3,7 +3,7 @@ import { CharacterRow, GroupChatRow, query } from './db';
 import { LLMMessage } from './llm';
 import { getRelevantLore } from './lore';
 import { getRelevantMemories } from './memories';
-import { getDefaultPersona, getPersonaById } from './store';
+import { clampMaxTokens, clampTemperature, getDefaultPersona, getPersonaById } from './store';
 
 export interface GroupMessageRow {
   id: string;
@@ -118,7 +118,7 @@ ${groupChat.scenario ? `- Situasi Grup: ${groupChat.scenario}` : ''}
   return {
     speaker,
     llmMessages,
-    temperature: groupChat.temperature || 0.9,
-    maxTokens: groupChat.max_tokens || 1024,
+    temperature: clampTemperature(groupChat.temperature, 0.9),
+    maxTokens: clampMaxTokens(groupChat.max_tokens, 1024),
   };
 }

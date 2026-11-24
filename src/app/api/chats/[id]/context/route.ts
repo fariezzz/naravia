@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { buildTurnContext } from '@/lib/chatTurn';
-import { MessageRow, query } from '@/lib/db';
+import { MessageRow, query, queryOne } from '@/lib/db';
 import { handleApiError } from '@/lib/http';
 import { estimateTokens } from '@/lib/llm';
 import {
@@ -49,6 +49,14 @@ export async function GET(req: NextRequest, context: Ctx) {
       .slice(1)
       .reduce((sum, m) => sum + estimateTokens(m.content), 0);
 
+    const isCharOwner = Boolean(
+      chat.character_id &&
+        (await queryOne<{ id: string }>('SELECT id FROM characters WHERE id = $1 AND user_id = $2', [
+          chat.character_id,
+          user.id,
+        ]))
+    );
+
     return NextResponse.json({
       context: {
         systemTokens,
@@ -60,11 +68,13 @@ export async function GET(req: NextRequest, context: Ctx) {
         includedMessages: Math.max(0, ctx.llmMessages.length - 1),
         totalMessages: Number(totalCountRows[0]?.cnt || 0),
         hasSummary: Boolean(chat.summary && chat.summary.trim()),
-        matchedLore: ctx.matchedLore.map((l) => ({
-          id: l.id,
-          title: l.title,
-          matchedKeywords: l.matchedKeywords,
-        })),
+        matchedLore: isCharOwner
+          ? ctx.matchedLore.map((l) => ({
+              id: l.id,
+              title: l.title,
+              matchedKeywords: l.matchedKeywords,
+            }))
+          : [],
         activeMemories: ctx.selectedMemories.map((m) => ({
           id: m.id,
           type: m.type,

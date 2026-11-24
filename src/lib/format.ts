@@ -19,37 +19,49 @@ export function formatCharacterRow(
     is_owner?: boolean;
     bookmark_count?: number;
     bookmarked?: boolean;
-  }
+  },
+  options?: { isOwner?: boolean }
 ) {
+  const opts = options && typeof options === 'object' ? options : undefined;
+  const isOwner = opts?.isOwner ?? (row.is_owner !== undefined ? Boolean(row.is_owner) : true);
+  const allowRemix = Boolean(row.allow_remix);
+  const exposePrompt = isOwner || allowRemix;
+
   return {
     id: row.id,
     name: row.name,
     tagline: row.tagline,
     avatar: row.avatar,
     description: row.description,
-    personality: row.personality,
-    speaking_style: row.speaking_style,
-    scenario: row.scenario,
+    personality: exposePrompt ? row.personality : '',
+    speaking_style: exposePrompt ? row.speaking_style : '',
+    scenario: exposePrompt ? row.scenario : '',
     greeting: parseJsonSafe<string[]>(row.greeting, []),
-    example_dialogues: parseJsonSafe<Array<{ user: string; char: string }>>(row.example_dialogues, []),
+    example_dialogues: exposePrompt
+      ? parseJsonSafe<Array<{ user: string; char: string }>>(row.example_dialogues, [])
+      : [],
     tags: parseJsonSafe<string[]>(row.tags, []),
-    research_notes: parseJsonSafe<any>(row.research_notes, {
-      mode: 'manual',
-      summary: row.research_notes || '',
-      sources: [],
-      uncertainFields: [],
-    }),
-    world_id: row.world_id,
+    // Catatan riset, tautan world_id, pin/favorit, dan override suhu hanya milik pemilik karakter
+    research_notes: isOwner
+      ? parseJsonSafe<any>(row.research_notes, {
+          mode: 'manual',
+          summary: row.research_notes || '',
+          sources: [],
+          uncertainFields: [],
+        })
+      : null,
+    world_id: isOwner ? row.world_id : null,
     world_name: row.world_name || null,
-    is_pinned: Boolean(row.is_pinned),
-    is_favorite: Boolean(row.is_favorite),
-    temperature_override: row.temperature_override,
+    is_pinned: isOwner ? Boolean(row.is_pinned) : false,
+    is_favorite: isOwner ? Boolean(row.is_favorite) : false,
+    temperature_override: isOwner ? row.temperature_override : null,
     visibility: row.visibility === 'public' ? 'public' : 'private',
-    allow_remix: Boolean(row.allow_remix),
+    allow_remix: allowRemix,
+    prompt_hidden: !exposePrompt,
     published_at: row.published_at || null,
     // Nama pembuat ditampilkan di profil karakter; email tidak pernah diekspos
     creator_name: row.creator_name || '',
-    is_owner: Boolean(row.is_owner),
+    is_owner: isOwner,
     bookmark_count: Number(row.bookmark_count || 0),
     bookmarked: Boolean(row.bookmarked),
     chat_count: Number(row.chat_count || 0),
@@ -57,6 +69,38 @@ export function formatCharacterRow(
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+/**
+ * Membersihkan snapshot karakter sebelum diekspor ke berkas JSON pengguna:
+ * karakter milik orang lain yang tidak mengizinkan remix tidak boleh membocorkan
+ * prompt internal maupun catatan riset pribadi kreatornya.
+ */
+export function sanitizeCharacterSnapshotForExport(
+  rawSnapshot: string | null | undefined,
+  isOwner: boolean
+): string | null {
+  if (!rawSnapshot) return null;
+  if (isOwner) return rawSnapshot;
+  const parsed = parseJsonSafe<Record<string, unknown> | null>(rawSnapshot, null);
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const allowRemix = Boolean(parsed.allow_remix);
+  if (allowRemix) {
+    const { research_notes: _rn, user_id: _uid, world_id: _wid, ...safe } = parsed;
+    return JSON.stringify(safe);
+  }
+  return JSON.stringify({
+    id: parsed.id ?? null,
+    name: parsed.name ?? '',
+    tagline: parsed.tagline ?? '',
+    avatar: parsed.avatar ?? '',
+    description: parsed.description ?? '',
+    greeting: parsed.greeting ?? '[]',
+    tags: parsed.tags ?? '[]',
+    visibility: parsed.visibility ?? 'public',
+    allow_remix: 0,
+  });
 }
 
 export function formatLoreRow(l: LoreEntryRow) {

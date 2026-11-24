@@ -23,6 +23,7 @@ export const SYSTEM_SETTING_KEYS = [
   'search_api_key',
   'registration_mode',
   'default_daily_token_budget',
+  'safety_filter_mode',
 ] as const;
 
 export const SECRET_SETTING_KEYS = new Set<string>([
@@ -70,6 +71,7 @@ export function systemDefaultsFromEnv(): Record<string, string> {
     search_api_key: process.env.TAVILY_API_KEY || process.env.BRAVE_SEARCH_API_KEY || '',
     registration_mode: process.env.REGISTRATION_MODE === 'closed' ? 'closed' : 'open',
     default_daily_token_budget: process.env.DEFAULT_DAILY_TOKEN_BUDGET || '200000',
+    safety_filter_mode: 'standard',
   };
 }
 

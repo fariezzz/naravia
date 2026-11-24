@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execute, query, queryOne } from './db';
+import { HttpError } from './http';
 
 // Simpan unggahan di luar folder `public/` agar Next.js tidak pernah melayani
 // file privat secara statis tanpa melewati otorisasi di route `/uploads/[...path]`.
@@ -8,6 +9,7 @@ const UPLOADS_DIR = path.resolve(process.cwd(), 'data', 'uploads');
 const LEGACY_UPLOADS_DIR = path.resolve(process.cwd(), 'public', 'uploads');
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+export const MAX_USER_UPLOAD_STORAGE_BYTES = 100 * 1024 * 1024; // 100 MB per akun
 
 let legacyMigrated = false;
 
@@ -104,7 +106,7 @@ export function uploadFilenameFromUrl(avatarUrl: string | null | undefined): str
 }
 
 async function isUploadReferenced(url: string): Promise<boolean> {
-  const quotedUrl = JSON.stringify(url);
+  const avatarFieldNeedle = `"avatar":${JSON.stringify(url)}`;
   const row = await queryOne<{ cnt: number }>(
     `SELECT (
        (SELECT COUNT(*) FROM characters WHERE avatar = $1) +
@@ -113,7 +115,7 @@ async function isUploadReferenced(url: string): Promise<boolean> {
        (SELECT COUNT(*) FROM chats WHERE character_snapshot IS NOT NULL AND POSITION($2 IN character_snapshot) > 0) +
        (SELECT COUNT(*) FROM story_cast WHERE character_snapshot IS NOT NULL AND POSITION($2 IN character_snapshot) > 0)
      ) AS cnt`,
-    [url, quotedUrl]
+    [url, avatarFieldNeedle]
   );
   return Number(row?.cnt || 0) > 0;
 }
@@ -151,18 +153,87 @@ export async function replaceUploadAsset(
   return deleteUploadAsset(oldAvatarUrl, userId);
 }
 
+// Pastikan total penyimpanan berkas milik pengguna tidak melampaui kuota akun
+export async function assertUserUploadQuota(userId: string, incomingBytes: number): Promise<void> {
+  const row = await queryOne<{ total: number }>(
+    'SELECT COALESCE(SUM(size_bytes), 0) AS total FROM uploads WHERE user_id = $1',
+    [userId]
+  );
+  const currentTotal = Number(row?.total || 0);
+  if (currentTotal + Math.max(0, incomingBytes) > MAX_USER_UPLOAD_STORAGE_BYTES) {
+    throw new HttpError(
+      400,
+      'Kuota penyimpanan unggahan akun (100 MB) sudah penuh. Bersihkan aset lama di Pengaturan terlebih dahulu.'
+    );
+  }
+}
+
 // Pastikan avatar yang dipasang ke entitas adalah milik pengguna sendiri (atau URL https eksternal/kosong)
-export async function assertAvatarOwnership(avatarUrl: unknown, userId: string): Promise<string> {
+export async function assertAvatarOwnership(
+  avatarUrl: unknown,
+  userId: string,
+  options?: { allowExternal?: boolean }
+): Promise<string> {
   const trimmed = String(avatarUrl || '').trim();
   if (!trimmed) return '';
+  const allowExternal = options?.allowExternal ?? true;
   const filename = uploadFilenameFromUrl(trimmed);
   if (!filename) {
-    if (/^https:\/\//i.test(trimmed) && trimmed.length <= 1000) return trimmed;
+    if (allowExternal && /^https:\/\//i.test(trimmed) && trimmed.length <= 1000) return trimmed;
     return '';
   }
   const owner = await queryOne<{ user_id: string | null }>('SELECT user_id FROM uploads WHERE filename = $1', [filename]);
   if (!owner || owner.user_id !== userId) return '';
   return `/uploads/${filename}`;
+}
+
+/**
+ * Mensterilkan JSON character_snapshot saat restore/import agar tidak ada path
+ * `/uploads/<milik_orang_lain>` yang bisa disuntikkan ke snapshot untuk mem-bypass
+ * otorisasi `/uploads/[...path]` atau mengunci penghapusan file pemilik sah.
+ */
+export async function sanitizeSnapshotAvatar(
+  rawSnapshot: unknown,
+  userId: string
+): Promise<string | null> {
+  if (!rawSnapshot) return null;
+  let parsed: Record<string, unknown>;
+  try {
+    const candidate = typeof rawSnapshot === 'string' ? JSON.parse(rawSnapshot) : rawSnapshot;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+    parsed = { ...(candidate as Record<string, unknown>) };
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed.avatar === 'string') {
+    parsed.avatar = await assertAvatarOwnership(parsed.avatar, userId);
+  }
+
+  // Pastikan tidak ada properti string lain yang menyelipkan path /uploads/<milik_orang_lain>
+  const ownedFiles = new Set(
+    (await query<{ filename: string }>('SELECT filename FROM uploads WHERE user_id = $1', [userId])).map(
+      (r) => r.filename
+    )
+  );
+  const stripForeignUploads = (val: unknown): unknown => {
+    if (typeof val === 'string') {
+      return val.replace(/\/uploads\/([A-Za-z0-9._-]+)/g, (match, fname: string) =>
+        ownedFiles.has(fname) ? match : ''
+      );
+    }
+    if (Array.isArray(val)) return val.map(stripForeignUploads);
+    if (val && typeof val === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+        out[k] = stripForeignUploads(v);
+      }
+      return out;
+    }
+    return val;
+  };
+
+  return JSON.stringify(stripForeignUploads(parsed));
 }
 
 /**
@@ -202,7 +273,7 @@ export async function cleanupOrphanedUploads(userId?: string): Promise<number> {
            (SELECT COUNT(*) FROM chats WHERE character_snapshot IS NOT NULL AND POSITION($1 IN character_snapshot) > 0) +
            (SELECT COUNT(*) FROM story_cast WHERE character_snapshot IS NOT NULL AND POSITION($1 IN character_snapshot) > 0)
          ) AS cnt`,
-        [JSON.stringify(url)]
+        [`"avatar":${JSON.stringify(url)}`]
       );
       if (Number(snapRef?.cnt || 0) > 0) continue;
 

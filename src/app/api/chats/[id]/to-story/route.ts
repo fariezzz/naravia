@@ -4,7 +4,7 @@ import { MessageRow, query, queryOne, withTransaction } from '@/lib/db';
 import { handleApiError, jsonError } from '@/lib/http';
 import { newId } from '@/lib/ids';
 import { countWords, generateLLMResponse } from '@/lib/llm';
-import { enforceRateLimit } from '@/lib/rateLimit';
+import { enforceLlmRateLimit, enforceRateLimit } from '@/lib/rateLimit';
 import { extractJsonObject, sanitizeGenre } from '@/lib/storyHelpers';
 import { buildCharacterCastBio, buildChatToStoryMessages } from '@/lib/storyPrompt';
 import { requireOwnedChat, resolveChatCharacter, resolveChatPersona } from '@/lib/store';
@@ -15,6 +15,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireUser(req);
+    enforceLlmRateLimit(user.id);
     enforceRateLimit(`chat-to-story:${user.id}`, 10, 60 * 60_000);
 
     const { id: chatId } = await context.params;

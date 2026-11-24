@@ -39,6 +39,7 @@ export default function CharacterAvatar({ name, avatar, size = 'md' }: Character
         alt={name}
         loading="lazy"
         decoding="async"
+        referrerPolicy="no-referrer"
         onError={() => setLoadError(true)}
         className={`${sizeClasses} object-cover shrink-0 border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 block`}
       />

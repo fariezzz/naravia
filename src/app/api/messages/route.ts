@@ -99,7 +99,17 @@ export async function POST(req: NextRequest) {
       );
       await execute('UPDATE chats SET updated_at = now() WHERE id = $1', [chat.id]);
 
-      return NextResponse.json({ message: formatMessageRow(updated!), matchedLore: turn.matchedLore });
+      const isCharOwner = Boolean(
+        chat.character_id &&
+          (await queryOne<{ id: string }>('SELECT id FROM characters WHERE id = $1 AND user_id = $2', [
+            chat.character_id,
+            user.id,
+          ]))
+      );
+      const safeLore = isCharOwner
+        ? turn.matchedLore.map((l) => ({ id: l.id, title: l.title, matchedKeywords: l.matchedKeywords }))
+        : [];
+      return NextResponse.json({ message: formatMessageRow(updated!), matchedLore: safeLore });
     }
 
     // 3. Edit isi pesan
@@ -259,10 +269,21 @@ export async function POST(req: NextRequest) {
       [character.id, user.id]
     );
 
+    const isCharOwner = Boolean(
+      chat.character_id &&
+        (await queryOne<{ id: string }>('SELECT id FROM characters WHERE id = $1 AND user_id = $2', [
+          chat.character_id,
+          user.id,
+        ]))
+    );
+    const safeLore = isCharOwner
+      ? turn.matchedLore.map((l) => ({ id: l.id, title: l.title, matchedKeywords: l.matchedKeywords }))
+      : [];
+
     return NextResponse.json({
       userMessage: userMessageRow ? formatMessageRow(userMessageRow) : null,
       characterMessage: formatMessageRow(charMessage!),
-      matchedLore: turn.matchedLore,
+      matchedLore: safeLore,
       chat: updatedChat ? stripOwner(updatedChat) : null,
       memories: updatedMemories.map(stripOwner),
     });

@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
       [user.id]
     );
 
-    return NextResponse.json({ characters: rows.map(formatCharacterRow) });
+    return NextResponse.json({ characters: rows.map((r) => formatCharacterRow(r, { isOwner: true })) });
   } catch (err) {
     return handleApiError(err, 'Gagal memuat daftar karakter.');
   }
@@ -62,8 +62,10 @@ export async function POST(req: NextRequest) {
     const researchNotes = normalizeResearchNotes(body.research_notes);
 
     const worldId = await resolveOwnedWorldId(user.id, body.world_id);
-    const avatar = await assertAvatarOwnership(body.avatar, user.id);
     const visibility = normalizeVisibility(body.visibility);
+    const avatar = await assertAvatarOwnership(body.avatar, user.id, {
+      allowExternal: visibility !== 'public',
+    });
     const id = newId('char');
 
     const created = await queryOne<CharacterRow>(

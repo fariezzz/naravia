@@ -78,7 +78,7 @@ export async function GET(req: NextRequest, context: Ctx) {
         : [];
 
     return NextResponse.json({
-      character: formatCharacterRow(enriched),
+      character: formatCharacterRow(enriched, { isOwner: character.is_owner }),
       chats: chats.map(stripOwner),
       memories: memories.map(stripOwner),
     });
@@ -126,14 +126,18 @@ export async function PUT(req: NextRequest, context: Ctx) {
     const researchNotes =
       body.research_notes !== undefined ? normalizeResearchNotes(body.research_notes) : existing.research_notes;
 
-    const oldAvatar = existing.avatar;
-    const newAvatar = body.avatar !== undefined ? await assertAvatarOwnership(body.avatar, user.id) : existing.avatar;
-    const worldId = body.world_id !== undefined ? await resolveOwnedWorldId(user.id, body.world_id) : existing.world_id;
-
     const visibility =
       body.visibility !== undefined ? normalizeVisibility(body.visibility) : existing.visibility;
     const allowRemix =
       body.allow_remix !== undefined ? (body.allow_remix ? 1 : 0) : existing.allow_remix ? 1 : 0;
+
+    const oldAvatar = existing.avatar;
+    const rawAvatarCandidate = body.avatar !== undefined ? body.avatar : existing.avatar;
+    // Karakter publik hanya boleh memakai avatar unggahan lokal agar tidak membocorkan IP pengunjung
+    const newAvatar = await assertAvatarOwnership(rawAvatarCandidate, user.id, {
+      allowExternal: visibility !== 'public',
+    });
+    const worldId = body.world_id !== undefined ? await resolveOwnedWorldId(user.id, body.world_id) : existing.world_id;
 
     const updated = await queryOne<CharacterRow>(
       `UPDATE characters SET

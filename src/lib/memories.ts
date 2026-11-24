@@ -111,9 +111,13 @@ export function rankMemories(
 /**
  * Menghitung dan menyimpan embedding untuk satu memori secara non-blocking.
  */
-export async function saveMemoryEmbedding(memoryId: string, content: string): Promise<void> {
+export async function saveMemoryEmbedding(
+  memoryId: string,
+  content: string,
+  userId?: string
+): Promise<void> {
   try {
-    const vec = await generateEmbedding(content);
+    const vec = await generateEmbedding(content, { userId });
     if (!vec) return;
     await execute('UPDATE memories SET embedding = $1 WHERE id = $2', [JSON.stringify(vec), memoryId]);
   } catch {
@@ -142,13 +146,15 @@ export async function getRelevantMemories(params: {
   if (candidates.length === 0) return { memories: [], mode: 'recency' };
 
   const trimmedQuery = (params.recentText || '').slice(-1500).trim();
-  const queryEmbedding = trimmedQuery ? await generateEmbedding(trimmedQuery).catch(() => null) : null;
+  const queryEmbedding = trimmedQuery
+    ? await generateEmbedding(trimmedQuery, { userId: params.userId }).catch(() => null)
+    : null;
 
   // Jika model embedding aktif, lengkapi secara bertahap memori lama yang belum punya vektor di latar belakang
   if (queryEmbedding) {
     const missing = candidates.filter((m) => !m.embedding).slice(0, 4);
     if (missing.length > 0) {
-      Promise.all(missing.map((m) => saveMemoryEmbedding(m.id, m.content))).catch(() => undefined);
+      Promise.all(missing.map((m) => saveMemoryEmbedding(m.id, m.content, params.userId))).catch(() => undefined);
     }
   }
 

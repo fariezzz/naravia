@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { handleApiError, jsonError, readJson } from '@/lib/http';
+import { handleApiError, jsonError, readJson, redactInternalDetails } from '@/lib/http';
 import { cleanStoryOutput, streamLLMResponse } from '@/lib/llm';
-import { enforceRateLimit } from '@/lib/rateLimit';
+import { enforceLlmRateLimit, enforceRateLimit } from '@/lib/rateLimit';
 import { loadStoryGenerationBundle } from '@/lib/storyHelpers';
 import { buildStoryRewriteMessages, RewriteAction } from '@/lib/storyPrompt';
 
@@ -17,6 +17,7 @@ export async function POST(
 ) {
   try {
     const user = await requireUser(req);
+    enforceLlmRateLimit(user.id);
     enforceRateLimit(`story-rewrite:${user.id}`, 45, 60 * 60_000);
 
     const { id: storyId, chapterId } = await context.params;
@@ -81,7 +82,10 @@ export async function POST(
           sendEvent('done', { rewrittenText: cleaned });
         } catch (err) {
           sendEvent('error', {
-            message: err instanceof Error ? err.message : 'Gagal menyunting teks terpilih.',
+            message:
+              err instanceof Error
+                ? redactInternalDetails(err.message)
+                : 'Gagal menyunting teks terpilih.',
           });
         } finally {
           try {

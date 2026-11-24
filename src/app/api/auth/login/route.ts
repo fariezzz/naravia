@@ -22,11 +22,13 @@ export async function POST(req: NextRequest) {
       return jsonError('Email dan kata sandi wajib diisi dengan benar.', 400);
     }
 
-    // Batasi percobaan per IP dan per email untuk mencegah tebak kata sandi
+    // Batasi percobaan per IP, pasangan (IP+email), dan ambang global email yang lebih longgar
+    // agar satu IP jahat tidak mudah mengunci (lockout DoS) pemilik akun sah.
     const ipLimit = checkRateLimit(`login-ip:${ip}`, 20, 15 * 60_000);
-    const emailLimit = checkRateLimit(`login-email:${email}`, 8, 15 * 60_000);
-    if (!ipLimit.ok || !emailLimit.ok) {
-      const wait = Math.max(ipLimit.retryAfterSec, emailLimit.retryAfterSec);
+    const pairLimit = checkRateLimit(`login-pair:${ip}:${email}`, 8, 15 * 60_000);
+    const globalEmailLimit = checkRateLimit(`login-email-global:${email}`, 40, 15 * 60_000);
+    if (!ipLimit.ok || !pairLimit.ok || !globalEmailLimit.ok) {
+      const wait = Math.max(ipLimit.retryAfterSec, pairLimit.retryAfterSec, globalEmailLimit.retryAfterSec);
       return jsonError(`Terlalu banyak percobaan masuk. Coba lagi dalam ${Math.ceil(wait / 60)} menit.`, 429);
     }
 
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
       return jsonError('Akun ini dinonaktifkan. Hubungi admin.', 403);
     }
 
-    resetRateLimit(`login-email:${email}`);
+    resetRateLimit(`login-pair:${ip}:${email}`);
     const { token, expiresAt } = await createSession(user.id, req);
     await execute('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
     await logAudit({ userId: user.id, actorEmail: email, action: 'login', ip });

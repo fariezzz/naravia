@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteUploadAsset, ensureUploadsDir, MAX_UPLOAD_BYTES } from '@/lib/assets';
+import {
+  assertUserUploadQuota,
+  deleteUploadAsset,
+  ensureUploadsDir,
+  MAX_UPLOAD_BYTES,
+} from '@/lib/assets';
 import { requireUser } from '@/lib/auth';
 import { handleApiError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
@@ -42,6 +47,7 @@ export async function POST(req: NextRequest) {
       const buffer = Buffer.from(await file.arrayBuffer());
       const ext = detectImageExt(buffer);
       if (!ext) return jsonError('Format gambar harus WEBP, PNG, atau JPG.', 400);
+      await assertUserUploadQuota(user.id, buffer.length);
 
       const aspect = String(formData.get('aspect') || '').toLowerCase();
       const prefix =
@@ -100,8 +106,10 @@ export async function POST(req: NextRequest) {
 </svg>`;
 
     const filename = `${newId('avatar-gen')}.svg`;
+    const svgSize = Buffer.byteLength(svgContent);
+    await assertUserUploadQuota(user.id, svgSize);
     fs.writeFileSync(path.join(ensureUploadsDir(), filename), svgContent, 'utf8');
-    await registerUpload(filename, user.id, Buffer.byteLength(svgContent));
+    await registerUpload(filename, user.id, svgSize);
 
     return NextResponse.json({ avatarUrl: `/uploads/${filename}` });
   } catch (err) {

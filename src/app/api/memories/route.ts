@@ -4,6 +4,7 @@ import { execute, MemoryRow, query, queryOne } from '@/lib/db';
 import { handleApiError, HttpError, jsonError, readJson } from '@/lib/http';
 import { newId } from '@/lib/ids';
 import { sanitizeMemoryForClient, saveMemoryEmbedding } from '@/lib/memories';
+import { enforceRateLimit } from '@/lib/rateLimit';
 import { requireOwnedChat, requireOwnedMessage, requireVisibleCharacter } from '@/lib/store';
 
 export const runtime = 'nodejs';
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser(req);
+    enforceRateLimit(`memories-write:${user.id}`, 40, 60 * 60_000);
     const body = await readJson(req);
     const content = String(body.content || '').trim();
     if (!content) return jsonError('Isi memori tidak boleh kosong.', 400);
@@ -80,7 +82,7 @@ export async function POST(req: NextRequest) {
       await execute('UPDATE messages SET is_pinned_memory = 1 WHERE id = $1', [sourceMessageId]);
     }
     if (created) {
-      saveMemoryEmbedding(created.id, content).catch(() => undefined);
+      saveMemoryEmbedding(created.id, content, user.id).catch(() => undefined);
     }
 
     return NextResponse.json({ memory: sanitizeMemoryForClient(created!) }, { status: 201 });
@@ -92,6 +94,7 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const user = await requireUser(req);
+    enforceRateLimit(`memories-write:${user.id}`, 40, 60 * 60_000);
     const body = await readJson(req);
     const id = String(body.id || '').trim();
     const content = String(body.content || '').trim();
@@ -104,7 +107,7 @@ export async function PUT(req: NextRequest) {
       [content, body.type === 'preference' ? 'preference' : 'fact', id, user.id]
     );
     if (updated) {
-      saveMemoryEmbedding(updated.id, content).catch(() => undefined);
+      saveMemoryEmbedding(updated.id, content, user.id).catch(() => undefined);
     }
     return NextResponse.json({ memory: sanitizeMemoryForClient(updated!) });
   } catch (err) {
